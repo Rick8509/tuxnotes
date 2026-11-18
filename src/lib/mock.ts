@@ -3,7 +3,7 @@
 // crate remains the source of truth (and is what the tests cover).
 
 import { extractText } from "./text";
-import type { DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import type { BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
 
@@ -36,7 +36,7 @@ function load(): MockDb {
   };
 }
 
-const db = load();
+let db = load();
 const persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
 
 const fail = (msg: string): never => {
@@ -208,9 +208,91 @@ const handlers: Record<string, (a: Args) => unknown> = {
   },
 };
 
+// --------------------------------------------------------- fake Google Drive
+
+const backup: BackupStatus & { files: { info: BackupInfo; data: string }[]; cancel?: () => void } = {
+  clientSource: "builtIn",
+  signedIn: false,
+  account: null,
+  busy: null,
+  autoBackup: "daily",
+  keepBackups: 10,
+  lastBackupAt: null,
+  lastBackupError: null,
+  files: [],
+};
+const status = (): BackupStatus => {
+  const { files: _f, cancel: _c, ...rest } = backup;
+  return rest;
+};
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const signedIn = () => backup.signedIn || fail("You're not signed in to Google Drive.");
+
+Object.assign(handlers, {
+  backup_status: status,
+  set_backup_preferences: ({ autoBackup, keepBackups }: Args) => {
+    Object.assign(backup, { autoBackup, keepBackups: Math.min(100, Math.max(1, keepBackups)) });
+    return status();
+  },
+  set_google_client: ({ clientId }: Args) => {
+    backup.clientSource = clientId ? "custom" : "builtIn";
+    return status();
+  },
+  google_sign_in: async () => {
+    backup.busy = "signingIn";
+    const cancelled = await Promise.race([
+      wait(900).then(() => false),
+      new Promise<boolean>((r) => (backup.cancel = () => r(true))),
+    ]);
+    backup.busy = null;
+    if (cancelled) fail("Sign-in cancelled.");
+    Object.assign(backup, { signedIn: true, account: "you@example.com" });
+    return status();
+  },
+  google_cancel_sign_in: () => backup.cancel?.(),
+  google_sign_out: () => {
+    Object.assign(backup, { signedIn: false, account: null });
+    return status();
+  },
+  backup_now: async () => {
+    signedIn();
+    backup.busy = "backingUp";
+    await wait(600);
+    const t = now();
+    const data = JSON.stringify(db);
+    const info: BackupInfo = {
+      id: uid(),
+      name: `tuxnotes-backup-${t}.zip`,
+      createdAt: t,
+      size: data.length,
+      noteCount: db.notes.length,
+      appVersion: "0.1.0",
+    };
+    backup.files.unshift({ info, data });
+    backup.files = backup.files.slice(0, backup.keepBackups);
+    Object.assign(backup, { busy: null, lastBackupAt: t, lastBackupError: null });
+    return info;
+  },
+  list_backups: async () => {
+    signedIn();
+    await wait(300);
+    return backup.files.map((f) => f.info);
+  },
+  restore_backup: async ({ id }: Args) => {
+    signedIn();
+    const file = backup.files.find((f) => f.info.id === id) ?? fail("Backup not found.");
+    backup.busy = "restoring";
+    await wait(600);
+    db = JSON.parse(file.data);
+    backup.busy = null;
+    const info = file.info;
+    return { noteCount: info.noteCount, folderCount: db.folders.length, backupCreatedAt: info.createdAt, safetyCopy: "(browser mock)" };
+  },
+});
+
 export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
   const handler = handlers[cmd] ?? fail(`unknown command: ${cmd}`);
-  const result = handler(args);
+  const result = await handler(args);
   persist();
   return structuredClone(result) as T;
 }

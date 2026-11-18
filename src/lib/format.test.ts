@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysUntilPurge, formatListDate, purgeLabel } from "./format";
+import { daysUntilPurge, formatBytes, formatListDate, purgeLabel } from "./format";
 
 const now = new Date(2026, 10, 18, 15, 30); // Wed 18 Nov 2026, 15:30 local time
 
@@ -40,5 +40,14 @@ describe("purgeLabel", () => {
   it("pluralises", () => {
     expect(purgeLabel(0, 0)).toBe("30 days");
     expect(purgeLabel(0, 29.5 * day)).toBe("1 day");
+  });
+});
+
+describe("formatBytes", () => {
+  it("picks sensible units", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(25 * 1024 * 1024)).toBe("25 MB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.0 GB");
   });
 });

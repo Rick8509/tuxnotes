@@ -14,7 +14,7 @@ env:
 
 jobs:
   core:
-    name: Core (Rust tests, clippy, fmt)
+    name: Core + Drive client (Rust tests, clippy, fmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +23,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy -p tuxnotes-core --all-targets -- -D warnings
-      - run: cargo test -p tuxnotes-core
+      - run: cargo clippy -p tuxnotes-core -p tuxnotes-gdrive --all-targets -- -D warnings
+      - run: cargo test -p tuxnotes-core -p tuxnotes-gdrive
 
   frontend:
     name: Frontend (typecheck, tests, build)
@@ -62,3 +62,4 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test -p tuxnotes

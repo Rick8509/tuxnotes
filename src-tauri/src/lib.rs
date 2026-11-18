@@ -1,24 +1,37 @@
+mod backup_service;
 mod commands;
+mod credentials;
+mod settings;
 
 use std::sync::Mutex;
+use std::time::Duration;
 
-use tauri::Manager;
+use backup_service::BackupService;
+use tauri::{AppHandle, Emitter, Manager};
 use tuxnotes_core::Store;
 
 /// Shared application state. SQLite connections are not `Sync`, so the store
 /// lives behind a mutex; every command holds it only for one short operation.
 pub struct AppState {
     pub store: Mutex<Store>,
+    pub backup: BackupService,
 }
+
+/// How often the scheduler checks whether an automatic backup is due.
+const AUTO_BACKUP_CHECK: Duration = Duration::from_secs(15 * 60);
+/// Give the app time to settle before the first automatic backup.
+const AUTO_BACKUP_INITIAL_DELAY: Duration = Duration::from_secs(90);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // ~/.local/share/<identifier>/notes.db
+            // ~/.local/share/<identifier>/notes.db and ~/.config/<identifier>/settings.json
             let data_dir = app.path().app_data_dir()?;
+            let config_dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("notes.db");
             log::info!("opening database at {}", db_path.display());
@@ -29,9 +42,18 @@ pub fn run() {
                 Ok(n) => log::info!("purged {n} expired note(s) from Recently Deleted"),
                 Err(e) => log::warn!("could not purge expired trash: {e}"),
             }
+            let backup = BackupService::new(
+                data_dir,
+                config_dir,
+                db_path,
+                app.package_info().version.to_string(),
+            );
+            backup.clean_tmp();
             app.manage(AppState {
                 store: Mutex::new(store),
+                backup,
             });
+            spawn_auto_backup(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -51,7 +73,40 @@ pub fn run() {
             commands::empty_trash,
             commands::trash_count,
             commands::search_notes,
+            commands::backup_status,
+            commands::set_backup_preferences,
+            commands::set_google_client,
+            commands::google_sign_in,
+            commands::google_cancel_sign_in,
+            commands::google_sign_out,
+            commands::backup_now,
+            commands::list_backups,
+            commands::restore_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TuxNotes");
+}
+
+/// Background loop that runs automatic backups when they're due.
+fn spawn_auto_backup(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(AUTO_BACKUP_INITIAL_DELAY).await;
+        loop {
+            let state = app.state::<AppState>();
+            if state.backup.auto_backup_due(backup_service::now_ms()) {
+                log::info!("starting automatic backup");
+                match state.backup.backup_now(&app).await {
+                    Ok(info) => {
+                        log::info!("automatic backup finished: {}", info.name);
+                        let _ = app.emit("backup-status-changed", ());
+                    }
+                    Err(e) => {
+                        log::warn!("automatic backup failed: {e}");
+                        let _ = app.emit("backup-status-changed", ());
+                    }
+                }
+            }
+            tokio::time::sleep(AUTO_BACKUP_CHECK).await;
+        }
+    });
 }

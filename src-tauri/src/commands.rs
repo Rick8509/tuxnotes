@@ -109,3 +109,71 @@ pub fn trash_count(state: State<'_, AppState>) -> Result<i64> {
 pub fn search_notes(state: State<'_, AppState>, query: String) -> Result<Vec<NoteSummary>> {
     store(&state)?.search(&query, SEARCH_LIMIT)
 }
+
+// ----------------------------------------------------------------- backup
+
+use crate::backup_service::{BackupInfo, BackupStatus, CmdResult, RestoreResult};
+use crate::settings::AutoBackup;
+
+#[tauri::command]
+pub fn backup_status(state: State<'_, AppState>) -> BackupStatus {
+    state.backup.status()
+}
+
+#[tauri::command]
+pub fn set_backup_preferences(
+    state: State<'_, AppState>,
+    auto_backup: AutoBackup,
+    keep_backups: u32,
+) -> BackupStatus {
+    state.backup.set_preferences(auto_backup, keep_backups)
+}
+
+#[tauri::command]
+pub fn set_google_client(
+    state: State<'_, AppState>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+) -> BackupStatus {
+    state.backup.set_client(client_id, client_secret)
+}
+
+#[tauri::command]
+pub async fn google_sign_in(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<BackupStatus> {
+    state.backup.sign_in(&app).await
+}
+
+#[tauri::command]
+pub fn google_cancel_sign_in(state: State<'_, AppState>) {
+    state.backup.cancel_sign_in()
+}
+
+#[tauri::command]
+pub async fn google_sign_out(state: State<'_, AppState>) -> CmdResult<BackupStatus> {
+    state.backup.sign_out().await
+}
+
+#[tauri::command]
+pub async fn backup_now(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<BackupInfo> {
+    state.backup.backup_now(&app).await
+}
+
+#[tauri::command]
+pub async fn list_backups(state: State<'_, AppState>) -> CmdResult<Vec<BackupInfo>> {
+    state.backup.list_backups().await
+}
+
+#[tauri::command]
+pub async fn restore_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CmdResult<RestoreResult> {
+    state.backup.restore(&app, &id).await
+}

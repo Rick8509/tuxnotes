@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder as FolderIcon, FolderPlus, NotebookText, Trash2 } from "@lucide/svelte";
+  import { Cloud, Folder as FolderIcon, FolderPlus, NotebookText, Trash2 } from "@lucide/svelte";
   import { app } from "../stores/app.svelte";
   import type { Folder, NoteFilter } from "../types";
   import { sameFilter } from "../types";
@@ -169,6 +169,10 @@
       <FolderPlus size={16} />
       <span>New Folder</span>
     </button>
+    <button class="new-folder" onclick={() => (app.showBackup = true)} title="Backup & Restore">
+      <Cloud size={16} />
+      <span>Backup</span>
+    </button>
   </footer>
 </aside>
 
@@ -251,6 +255,8 @@
   }
   .footer {
     flex: none;
+    display: flex;
+    justify-content: space-between;
     padding: 8px 10px 10px;
   }
   .new-folder {

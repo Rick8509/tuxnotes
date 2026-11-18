@@ -16,7 +16,12 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 tuxnotes-core = { path = "../crates/tuxnotes-core" }
+tuxnotes-gdrive = { path = "../crates/tuxnotes-gdrive" }
 tauri = { version = "2.12", features = [] }
+tauri-plugin-opener = "2"
+keyring = { version = "3", features = ["async-secret-service", "tokio", "crypto-rust"] }
+reqwest.workspace = true
+tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log = "0.4"

@@ -4,7 +4,17 @@
 // an in-memory mock so the interface can be developed without building Rust.
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import type { DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import type {
+  AutoBackup,
+  BackupInfo,
+  BackupStatus,
+  DocJSON,
+  Folder,
+  Note,
+  NoteFilter,
+  NoteSummary,
+  RestoreResult,
+} from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -45,4 +55,16 @@ export const api = {
   emptyTrash: () => call<number>("empty_trash"),
   trashCount: () => call<number>("trash_count"),
   searchNotes: (query: string) => call<NoteSummary[]>("search_notes", { query }),
+
+  backupStatus: () => call<BackupStatus>("backup_status"),
+  setBackupPreferences: (autoBackup: AutoBackup, keepBackups: number) =>
+    call<BackupStatus>("set_backup_preferences", { autoBackup, keepBackups }),
+  setGoogleClient: (clientId: string | null, clientSecret: string | null) =>
+    call<BackupStatus>("set_google_client", { clientId, clientSecret }),
+  googleSignIn: () => call<BackupStatus>("google_sign_in"),
+  googleCancelSignIn: () => call<void>("google_cancel_sign_in"),
+  googleSignOut: () => call<BackupStatus>("google_sign_out"),
+  backupNow: () => call<BackupInfo>("backup_now"),
+  listBackups: () => call<BackupInfo[]>("list_backups"),
+  restoreBackup: (id: string) => call<RestoreResult>("restore_backup", { id }),
 };

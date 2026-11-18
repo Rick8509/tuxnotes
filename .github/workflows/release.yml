@@ -29,8 +29,10 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Google Drive backup (added in v0.2) reads its OAuth client from these secrets.
+          # Built-in Google OAuth client for Drive backup (see docs/google-setup.md).
+          # Uncomment once the repository secrets exist:
           # TUXNOTES_GOOGLE_CLIENT_ID: ${{ secrets.TUXNOTES_GOOGLE_CLIENT_ID }}
+          # TUXNOTES_GOOGLE_CLIENT_SECRET: ${{ secrets.TUXNOTES_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "TuxNotes ${{ github.ref_name }}"

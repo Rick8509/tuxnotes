@@ -2,7 +2,7 @@
 
 **Open notes for Linux.** A lightweight, local-first notes app with a clean three-pane design inspired by Apple Notes.
 
-> Status: early development (v0.1). Google Drive backup is planned for v0.2.
+> Status: early development (v0.2).
 
 ## Features
 
@@ -11,6 +11,7 @@
 - Checklists with round checkboxes, plus bulleted and numbered lists
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
 - Fast full-text search that ignores accents ("cafe" finds "café")
+- **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
 - Autosave, light and dark themes that follow your system, keyboard-first workflow
 - Small and fast: built with [Tauri](https://tauri.app) and stored in a single SQLite file
 
@@ -28,7 +29,13 @@
 
 ## Where are my notes?
 
-Everything is stored locally in `~/.local/share/io.github.tuxnotes.TuxNotes/notes.db` (SQLite).
+Everything is stored locally in `~/.local/share/io.github.tuxnotes.TuxNotes/notes.db` (SQLite). Settings live in `~/.config/io.github.tuxnotes.TuxNotes/settings.json`.
+
+Before a restore, TuxNotes saves a copy of your current notes in `~/.local/share/io.github.tuxnotes.TuxNotes/safety/`.
+
+## Google Drive backup
+
+Click **Backup** at the bottom of the sidebar. Release builds come with Google sign-in built in. If you build TuxNotes yourself, see [docs/google-setup.md](docs/google-setup.md) to create your own (free) Google OAuth client.
 
 ## Building from source
 
@@ -79,7 +86,8 @@ Rebuilding or reinstalling never touches your notes, which live in `~/.local/sha
 ## Project layout
 
 ```
-crates/tuxnotes-core/   Storage engine: SQLite, migrations, search, trash, snapshots (no GUI deps)
+crates/tuxnotes-core/   Storage engine: SQLite, migrations, search, trash, backup archives (no GUI deps)
+crates/tuxnotes-gdrive/ Google sign-in (loopback + PKCE) and Google Drive v3 client
 src-tauri/              Desktop shell: window and IPC commands that call tuxnotes-core
 src/                    Svelte 5 + TipTap user interface
 ```
@@ -90,7 +98,7 @@ Run these before committing. CI runs the same checks on every pull request.
 
 ```bash
 cargo fmt --all                   # format Rust code
-cargo test -p tuxnotes-core       # storage engine tests
+cargo test --workspace            # storage, Drive client and app tests
 cargo clippy --workspace --all-targets -- -D warnings
 npm run check && npm test         # typecheck + frontend unit tests
 ```
@@ -108,7 +116,7 @@ Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-taur
 ## Roadmap
 
 - [x] v0.1: folders, notes, rich text, checklists, search, pinning, Recently Deleted
-- [ ] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
+- [x] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
 - [ ] v0.3: images and attachments, tables, Markdown and PDF export, encrypted backups
 - [ ] Flathub release
 

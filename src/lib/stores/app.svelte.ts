@@ -35,7 +35,10 @@ class AppState {
   current = $state.raw<Note | null>(null);
   query = $state("");
   searchResults = $state<NoteSummary[] | null>(null);
-  error = $state<string | null>(null);
+  /** Bottom-of-window message. Errors stay longer than info messages. */
+  toast = $state<{ kind: "error" | "info"; message: string } | null>(null);
+  /** The Backup & Restore window is open. */
+  showBackup = $state(false);
   confirmRequest = $state<ConfirmRequest | null>(null);
   /** Bumped when the editor should take keyboard focus (e.g. after "New Note"). */
   focusEditorTick = $state(0);
@@ -48,7 +51,7 @@ class AppState {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
-  private errorTimer: ReturnType<typeof setTimeout> | null = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ------------------------------------------------------------- derived
 
@@ -85,10 +88,18 @@ class AppState {
   // ------------------------------------------------------------ plumbing
 
   showError(err: unknown) {
-    this.error = err instanceof Error ? err.message : String(err);
-    if (this.errorTimer) clearTimeout(this.errorTimer);
-    this.errorTimer = setTimeout(() => (this.error = null), 6000);
+    this.setToast("error", err instanceof Error ? err.message : String(err), 8000);
     console.error(err);
+  }
+
+  showInfo(message: string) {
+    this.setToast("info", message, 4000);
+  }
+
+  private setToast(kind: "error" | "info", message: string, ms: number) {
+    this.toast = { kind, message };
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => (this.toast = null), ms);
   }
 
   private async guard<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -154,6 +165,18 @@ class AppState {
     await this.refreshCounts();
     await this.loadNotes();
     await this.selectNote(this.notes[0]?.id ?? null);
+  }
+
+  /** Reload everything from the backend, e.g. after restoring a backup. */
+  async reloadAll() {
+    this.pending = null;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.clearSearch();
+    this.filter = { kind: "all" };
+    this.loadToken++;
+    this.selectedId = null;
+    this.current = null;
+    await this.init();
   }
 
   private async loadNotes() {

@@ -437,6 +437,34 @@ impl Store {
 
     // ------------------------------------------------------------------ backups
 
+    /// Number of folders and notes (including notes in Recently Deleted).
+    pub fn counts(&self) -> Result<(i64, i64)> {
+        Ok(self.conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM folders), (SELECT COUNT(*) FROM notes)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+
+    /// Run SQLite's integrity check, including the full-text index.
+    pub fn check_integrity(&self) -> Result<()> {
+        let result: String = self
+            .conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if result != "ok" {
+            return Err(Error::InvalidBackup(format!(
+                "The database is damaged: {result}"
+            )));
+        }
+        self.conn
+            .execute(
+                "INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')",
+                [],
+            )
+            .map_err(|e| Error::InvalidBackup(format!("The search index is damaged: {e}")))?;
+        Ok(())
+    }
+
     /// Write a consistent, compacted copy of the whole database to `dest`.
     /// Safe to call while the app is running. `dest` must not exist yet.
     pub fn snapshot_to(&self, dest: impl AsRef<Path>) -> Result<()> {

@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { isTauri } from "./lib/api";
   import { app } from "./lib/stores/app.svelte";
+  import BackupDialog from "./lib/components/BackupDialog.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import NoteList from "./lib/components/NoteList.svelte";
@@ -33,7 +34,7 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
-    if (app.confirmRequest) return;
+    if (app.confirmRequest || app.showBackup) return;
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return;
     const key = e.key.toLowerCase();
@@ -67,12 +68,15 @@
   <Editor />
 </div>
 
+{#if app.showBackup}
+  <BackupDialog />
+{/if}
 <ConfirmDialog />
 
-{#if app.error}
-  <div class="toast" role="alert">
-    <span>{app.error}</span>
-    <button aria-label="Dismiss" onclick={() => (app.error = null)}>✕</button>
+{#if app.toast}
+  <div class="toast" class:info={app.toast.kind === "info"} role={app.toast.kind === "error" ? "alert" : "status"}>
+    <span>{app.toast.message}</span>
+    <button aria-label="Dismiss" onclick={() => (app.toast = null)}>✕</button>
   </div>
 {/if}
 
@@ -102,6 +106,14 @@
     background: var(--text);
     color: var(--bg-editor);
     box-shadow: var(--shadow-pop);
+  }
+  .toast:not(.info)::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
   }
   .toast button {
     opacity: 0.7;

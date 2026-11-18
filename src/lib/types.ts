@@ -44,3 +44,37 @@ export function sameFilter(a: NoteFilter, b: NoteFilter): boolean {
   if (a.kind !== b.kind) return false;
   return a.kind !== "folder" || a.folderId === (b as { folderId: string }).folderId;
 }
+
+// ------------------------------------------------------------------ backup
+// Mirrors src-tauri/src/backup_service.rs and settings.rs.
+
+export type AutoBackup = "off" | "daily" | "weekly";
+export type BackupBusy = "signingIn" | "backingUp" | "restoring";
+export type ClientSource = "builtIn" | "custom" | "environment" | "none";
+
+export interface BackupStatus {
+  clientSource: ClientSource;
+  signedIn: boolean;
+  account: string | null;
+  busy: BackupBusy | null;
+  autoBackup: AutoBackup;
+  keepBackups: number;
+  lastBackupAt: number | null;
+  lastBackupError: string | null;
+}
+
+export interface BackupInfo {
+  id: string;
+  name: string;
+  createdAt: number | null;
+  size: number | null;
+  noteCount: number | null;
+  appVersion: string | null;
+}
+
+export interface RestoreResult {
+  noteCount: number;
+  folderCount: number;
+  backupCreatedAt: number;
+  safetyCopy: string;
+}

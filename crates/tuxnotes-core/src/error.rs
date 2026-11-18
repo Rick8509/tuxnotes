@@ -15,6 +15,16 @@ pub enum Error {
     #[error("{0}")]
     InvalidInput(String),
 
+    #[error("file error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("backup archive error: {0}")]
+    Zip(#[from] zip::result::ZipError),
+
+    /// The backup file is unusable (corrupt, tampered with, or from a newer version).
+    #[error("{0}")]
+    InvalidBackup(String),
+
     #[error(
         "this database was created by a newer version of TuxNotes \
          (schema {found}, this version supports up to {supported})"
