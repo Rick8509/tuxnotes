@@ -1,0 +1,378 @@
+<script lang="ts">
+  import { onMount, untrack } from "svelte";
+  import { Editor, Extension } from "@tiptap/core";
+  import StarterKit from "@tiptap/starter-kit";
+  import { TaskItem, TaskList } from "@tiptap/extension-list";
+  import { Placeholder } from "@tiptap/extensions";
+  import { EditorState } from "@tiptap/pm/state";
+  import { Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
+  import { formatEditorDate } from "../format";
+  import { app } from "../stores/app.svelte";
+  import type { DocJSON } from "../types";
+  import EditorToolbar from "./EditorToolbar.svelte";
+  import WindowControls from "./WindowControls.svelte";
+
+  let element: HTMLDivElement;
+  let scroller: HTMLDivElement;
+  let editor = $state.raw<Editor | null>(null);
+  let version = $state(0);
+  /** Id of the note currently loaded into the editor. */
+  let loadedId: string | null = null;
+
+  // Apple-Notes-like extra shortcuts.
+  const Shortcuts = Extension.create({
+    name: "tuxnotesShortcuts",
+    addKeyboardShortcuts() {
+      return {
+        "Mod-Shift-l": () => this.editor.commands.toggleTaskList(),
+        "Mod-Shift-s": () => this.editor.commands.toggleStrike(),
+        "Mod-Shift-t": () => this.editor.commands.toggleHeading({ level: 1 }),
+        "Mod-Shift-h": () => this.editor.commands.toggleHeading({ level: 2 }),
+        "Mod-Shift-j": () => this.editor.commands.toggleHeading({ level: 3 }),
+        "Mod-Shift-b": () => this.editor.commands.setParagraph(),
+      };
+    },
+  });
+
+  onMount(() => {
+    const ed = new Editor({
+      element,
+      extensions: [
+        StarterKit.configure({
+          heading: { levels: [1, 2, 3] },
+          link: { openOnClick: false, autolink: true, defaultProtocol: "https" },
+        }),
+        TaskList,
+        TaskItem.configure({ nested: true }),
+        Placeholder.configure({ placeholder: "Start writing…" }),
+        Shortcuts,
+      ],
+      editable: false,
+      editorProps: {
+        attributes: { class: "prose", spellcheck: "true", "aria-label": "Note editor" },
+      },
+      onTransaction: () => version++,
+      onUpdate: ({ editor: e }) => {
+        const id = loadedId;
+        if (id) app.markDirty(id, () => e.getJSON() as DocJSON);
+      },
+    });
+    editor = ed;
+    return () => {
+      void app.flush();
+      ed.destroy();
+      editor = null;
+    };
+  });
+
+  // Load the selected note. A fresh EditorState per note keeps undo history separate,
+  // so Ctrl+Z can never bring back another note's text.
+  // Depends only on `app.current` and `editor`; everything else is untracked so
+  // editor transactions can't re-trigger this effect (that would loop forever).
+  $effect(() => {
+    const note = app.current;
+    const ed = editor;
+    if (!ed) return;
+    untrack(() => loadNote(ed, note));
+  });
+
+  function loadNote(ed: Editor, note: typeof app.current) {
+    const id = note?.id ?? null;
+    if (id !== loadedId) {
+      loadedId = id;
+      const json = note ? $state.snapshot(note.content) : { type: "doc", content: [{ type: "paragraph" }] };
+      let doc;
+      try {
+        doc = ed.schema.nodeFromJSON(json);
+      } catch (err) {
+        app.showError(`This note couldn't be fully loaded: ${err}`);
+        doc = ed.schema.nodeFromJSON({ type: "doc", content: [{ type: "paragraph" }] });
+      }
+      ed.view.updateState(EditorState.create({ doc, plugins: ed.state.plugins }));
+      scroller.scrollTop = 0;
+      version++;
+    }
+    const editable = !!note && !note.deletedAt;
+    if (ed.isEditable !== editable) ed.setEditable(editable, false);
+  }
+
+  $effect(() => {
+    const ed = editor;
+    if (app.focusEditorTick && ed) untrack(() => ed.commands.focus("end"));
+  });
+
+  const note = $derived(app.current);
+  const readOnly = $derived(!note || !!note.deletedAt);
+</script>
+
+<main class="editor-pane">
+  <header class="header" data-tauri-drag-region>
+    <EditorToolbar {editor} {version} disabled={readOnly} />
+    <div class="spacer" data-tauri-drag-region></div>
+    {#if note && !note.deletedAt}
+      <button
+        class="icon-btn"
+        class:active={note.isPinned}
+        title={note.isPinned ? "Unpin note" : "Pin note"}
+        aria-label={note.isPinned ? "Unpin note" : "Pin note"}
+        onclick={() => app.togglePin(note.id)}
+      >
+        {#if note.isPinned}<PinOff size={17} />{:else}<Pin size={17} />{/if}
+      </button>
+    {/if}
+    <button
+      class="icon-btn"
+      title={app.isTrash ? "Delete permanently" : "Delete note (Ctrl+Delete)"}
+      aria-label="Delete note"
+      disabled={!note}
+      onclick={() => note && app.deleteNote(note.id)}
+    >
+      <Trash2 size={17} />
+    </button>
+    <WindowControls />
+  </header>
+
+  {#if note?.deletedAt}
+    <div class="trash-banner">
+      <span>This note is in Recently Deleted.</span>
+      <button onclick={() => app.restoreNote(note.id)}><RotateCcw size={13} /> Restore</button>
+    </div>
+  {/if}
+
+  <div class="scroll" class:hidden={!note} bind:this={scroller}>
+    <div class="date">{note ? formatEditorDate(note.updatedAt) : ""}</div>
+    <!-- TipTap owns everything inside this element. -->
+    <div bind:this={element}></div>
+  </div>
+
+  {#if !note}
+    <div class="empty">
+      <p>No note selected</p>
+      {#if !app.isTrash}
+        <button class="new" onclick={() => app.newNote()}><SquarePen size={15} /> New Note</button>
+      {/if}
+    </div>
+  {/if}
+</main>
+
+<style>
+  .editor-pane {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-editor);
+    min-width: 0;
+  }
+  .header {
+    height: var(--header-h);
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 12px;
+  }
+  .spacer {
+    flex: 1;
+    align-self: stretch;
+  }
+  .trash-banner {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .trash-banner button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+  .scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 max(32px, calc((100% - 760px) / 2)) 80px;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+  .scroll.hidden {
+    display: none;
+  }
+  .date {
+    padding: 6px 0 14px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-tertiary);
+    font-size: 15px;
+  }
+  .empty p {
+    margin: 0;
+  }
+  .new {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text);
+    font-size: 13px;
+  }
+  .new:hover {
+    background: var(--bg-active);
+  }
+
+  /* ---------------------------------------------------- note typography */
+  .scroll :global(.prose) {
+    outline: none;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text);
+    min-height: 60vh;
+    caret-color: var(--accent);
+  }
+  .scroll :global(.prose > :first-child) {
+    margin-top: 0;
+  }
+  /* Like Apple Notes, the first line is always shown as the note's title. */
+  .scroll :global(.prose > p:first-child),
+  .scroll :global(.prose > h2:first-child),
+  .scroll :global(.prose > h3:first-child) {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 0.3em;
+  }
+  .scroll :global(.prose p) {
+    margin: 0;
+  }
+  .scroll :global(.prose h1) {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0.6em 0 0.3em;
+  }
+  .scroll :global(.prose h2) {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0.8em 0 0.25em;
+  }
+  .scroll :global(.prose h3) {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0.8em 0 0.2em;
+  }
+  .scroll :global(.prose ul),
+  .scroll :global(.prose ol) {
+    margin: 0.25em 0;
+    padding-left: 1.6em;
+  }
+  .scroll :global(.prose li > p) {
+    margin: 0;
+  }
+  .scroll :global(.prose blockquote) {
+    margin: 0.5em 0;
+    padding-left: 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--text-secondary);
+  }
+  .scroll :global(.prose code) {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--bg-input);
+  }
+  .scroll :global(.prose pre) {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    overflow-x: auto;
+  }
+  .scroll :global(.prose pre code) {
+    padding: 0;
+    background: none;
+  }
+  .scroll :global(.prose a) {
+    color: var(--accent-strong);
+  }
+  .scroll :global(.prose hr) {
+    border: none;
+    border-top: 1px solid var(--separator-strong);
+    margin: 1em 0;
+  }
+  .scroll :global(.prose p.is-editor-empty:first-child::before) {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+    color: var(--text-tertiary);
+  }
+
+  /* Checklists: round yellow checkboxes like Apple Notes. */
+  .scroll :global(ul[data-type="taskList"]) {
+    list-style: none;
+    padding-left: 0.2em;
+  }
+  .scroll :global(ul[data-type="taskList"] > li) {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .scroll :global(ul[data-type="taskList"] > li > label) {
+    flex: none;
+    margin-top: 3px;
+    user-select: none;
+  }
+  .scroll :global(ul[data-type="taskList"] > li > div) {
+    flex: 1;
+    min-width: 0;
+  }
+  .scroll :global(ul[data-type="taskList"] > li input[type="checkbox"]) {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-tertiary);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .scroll :global(ul[data-type="taskList"] > li input[type="checkbox"]:checked) {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .scroll :global(ul[data-type="taskList"] > li input[type="checkbox"]:checked::after) {
+    content: "";
+    width: 4px;
+    height: 8px;
+    margin-top: -2px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .scroll :global(ul[data-type="taskList"] > li[data-checked="true"] > div) {
+    color: var(--text-tertiary);
+  }
+</style>

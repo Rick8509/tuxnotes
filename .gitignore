@@ -1,0 +1,21 @@
+# Rust
+/target/
+src-tauri/gen/
+
+# Node / Vite
+node_modules/
+dist/
+*.local
+
+# Editors & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
+
+# Secrets (Google OAuth client config etc.) — never commit these
+.env
+.env.*
+!.env.example
+client_secret*.json
