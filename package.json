@@ -33,5 +33,10 @@
     "typescript": "~6.0.3",
     "vite": "^8.3.8",
     "vitest": "^5.1.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rick8509/tuxnotes.git"
+  },
+  "homepage": "https://github.com/Rick8509/tuxnotes"
 }
