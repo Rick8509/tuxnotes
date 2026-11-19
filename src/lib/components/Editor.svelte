@@ -10,6 +10,7 @@
   import { isTauri } from "../api";
   import { formatEditorDate } from "../format";
   import { app } from "../stores/app.svelte";
+  import { prefs, TEXT_SIZE_PX } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
   import type { DocJSON } from "../types";
   import EditorToolbar from "./EditorToolbar.svelte";
@@ -186,7 +187,13 @@
   {/if}
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="scroll" class:hidden={!note} bind:this={scroller} onclick={onScrollerClick}>
+  <div
+    class="scroll first-{prefs.firstLine}"
+    class:hidden={!note}
+    style:--editor-font-size="{TEXT_SIZE_PX[prefs.textSize]}px"
+    bind:this={scroller}
+    onclick={onScrollerClick}
+  >
     <div class="date">{note ? formatEditorDate(note.updatedAt) : ""}</div>
     <!-- TipTap owns everything inside this element. -->
     <div bind:this={element}></div>
@@ -300,7 +307,8 @@
   .scroll :global(.prose) {
     outline: none;
     tab-size: 4;
-    font-size: 15px;
+    /* Set from Settings → Appearance → Text size; everything below scales with it. */
+    font-size: var(--editor-font-size, 15px);
     line-height: 1.55;
     color: var(--text);
     min-height: 60vh;
@@ -309,33 +317,40 @@
   .scroll :global(.prose > :first-child) {
     margin-top: 0;
   }
-  /* Like Apple Notes, the first line is always shown as the note's title. */
-  .scroll :global(.prose > p:first-child),
-  .scroll :global(.prose > h2:first-child),
-  .scroll :global(.prose > h3:first-child) {
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1.25;
-    margin-bottom: 0.3em;
-  }
   .scroll :global(.prose p) {
     margin: 0;
   }
   .scroll :global(.prose h1) {
-    font-size: 26px;
+    font-size: 1.733em;
     font-weight: 700;
     line-height: 1.25;
     margin: 0.6em 0 0.3em;
   }
   .scroll :global(.prose h2) {
-    font-size: 20px;
+    font-size: 1.333em;
     font-weight: 700;
     margin: 0.8em 0 0.25em;
   }
   .scroll :global(.prose h3) {
-    font-size: 16px;
+    font-size: 1.067em;
     font-weight: 600;
     margin: 0.8em 0 0.2em;
+  }
+  /* "New notes start with" (Settings → General): like Apple Notes, the first line
+     is shown as the note's title (or heading); "Body" leaves it as normal text. */
+  .scroll.first-title :global(.prose > p:first-child),
+  .scroll.first-title :global(.prose > h2:first-child),
+  .scroll.first-title :global(.prose > h3:first-child) {
+    font-size: 1.733em;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-bottom: 0.3em;
+  }
+  .scroll.first-heading :global(.prose > p:first-child),
+  .scroll.first-heading :global(.prose > h3:first-child) {
+    font-size: 1.333em;
+    font-weight: 700;
+    margin-bottom: 0.25em;
   }
   .scroll :global(.prose ul),
   .scroll :global(.prose ol) {
@@ -360,7 +375,7 @@
   }
   .scroll :global(.prose pre) {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 0.867em;
     padding: 10px 12px;
     border-radius: var(--radius-md);
     background: var(--bg-input);

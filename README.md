@@ -14,7 +14,8 @@
 - **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
 - Rounded, borderless window. Hide the sidebar, use focus mode to hide both side panes, and drag the dividers to resize them; the window remembers its size and layout
 - Notes grouped like Apple Notes (Pinned, Today, Yesterday, Previous 7 Days, …); drag a note onto a folder to move it
-- Autosave, light and dark themes that follow your system, keyboard-first workflow
+- **Settings** (`Ctrl+,`): sort notes by date edited, date created or title; date grouping on or off; how new notes start; System, Light or Dark theme; editor text size
+- Autosave, keyboard-first workflow
 - Small and fast: built with [Tauri](https://tauri.app) and stored in a single SQLite file
 
 ### Keyboard shortcuts
@@ -22,6 +23,7 @@
 | Action | Shortcut |
 |---|---|
 | New note | `Ctrl+N` |
+| Settings | `Ctrl+,` |
 | New folder | `Ctrl+Shift+N` |
 | Search | `Ctrl+F` |
 | Delete note | `Ctrl+Delete` |
@@ -44,7 +46,9 @@ Before a restore, TuxNotes saves a copy of your current notes in `~/.local/share
 
 ## Google Drive backup
 
-Click **Backup** at the bottom of the sidebar. Release builds come with Google sign-in built in. If you build TuxNotes yourself, see [docs/google-setup.md](docs/google-setup.md) to create your own (free) Google OAuth client.
+Open **Settings** (the gear at the bottom of the sidebar, or `Ctrl+,`) → **Backup**, then click **Back Up to Google Drive** or **Restore from Google Drive**. TuxNotes asks before opening your browser to sign in with Google; once you've allowed access, it does the backup (and turns on daily automatic backups), or shows your backups to restore.
+
+Release builds come with Google sign-in built in. If you build TuxNotes yourself, see [docs/google-setup.md](docs/google-setup.md) to create your own (free) Google OAuth client.
 
 ## Building from source
 

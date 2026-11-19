@@ -3,6 +3,7 @@
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { formatListDate, groupByDate, purgeLabel } from "../format";
   import { app } from "../stores/app.svelte";
+  import { prefs } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
   import type { NoteSummary } from "../types";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
@@ -28,11 +29,17 @@
   // Apple-style sections: Pinned, then Today / Yesterday / Previous 7 Days / … by last edit.
   // Search results and Recently Deleted are shown as one flat list.
   const showSections = $derived(!app.searchResults && !app.isTrash);
+  // Settings → General: date sections follow the sort field; sorting by title has none.
+  const dateOf = (n: NoteSummary) => (prefs.sortBy === "created" ? n.createdAt : n.updatedAt);
   const sections = $derived.by(() => {
     if (!showSections) return [{ label: "", notes: app.visibleNotes }];
     const pinned = app.visibleNotes.filter((n) => n.isPinned);
     const rest = app.visibleNotes.filter((n) => !n.isPinned);
-    return [...(pinned.length ? [{ label: "Pinned", notes: pinned }] : []), ...groupByDate(rest)];
+    const grouped =
+      prefs.groupByDate && prefs.sortBy !== "title"
+        ? groupByDate(rest, new Date(), undefined, dateOf)
+        : [{ label: pinned.length ? "Notes" : "", notes: rest }];
+    return [...(pinned.length ? [{ label: "Pinned", notes: pinned }] : []), ...grouped.filter((g) => g.notes.length)];
   });
   const ordered = $derived(sections.flatMap((s) => s.notes));
   const showFolderName = $derived(!!app.searchResults || app.filter.kind === "all");
@@ -135,7 +142,7 @@
     <span class="title">{note.title || "New Note"}</span>
     <span class="meta">
       <span class="date">
-        {note.deletedAt ? purgeLabel(note.deletedAt) : formatListDate(note.updatedAt)}
+        {note.deletedAt ? purgeLabel(note.deletedAt) : formatListDate(dateOf(note))}
       </span>
       <span class="snippet">{note.snippet || "No additional text"}</span>
     </span>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Cloud, Folder as FolderIcon, FolderPlus, NotebookText, PanelLeftClose, Trash2 } from "@lucide/svelte";
+  import { Folder as FolderIcon, FolderPlus, NotebookText, PanelLeftClose, Settings, Trash2 } from "@lucide/svelte";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { app } from "../stores/app.svelte";
   import { ui } from "../stores/ui.svelte";
@@ -219,9 +219,8 @@
       <FolderPlus size={16} />
       <span>New Folder</span>
     </button>
-    <button class="new-folder" onclick={() => (app.showBackup = true)} title="Backup & Restore">
-      <Cloud size={16} />
-      <span>Backup</span>
+    <button class="icon-btn" onclick={() => (app.settingsSection = "general")} title="Settings (Ctrl+,)" aria-label="Settings">
+      <Settings size={17} />
     </button>
   </footer>
 
@@ -347,6 +346,7 @@
   .footer {
     flex: none;
     display: flex;
+    align-items: center;
     justify-content: space-between;
     padding: 8px 10px 10px;
   }

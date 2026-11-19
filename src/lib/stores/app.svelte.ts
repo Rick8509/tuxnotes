@@ -2,11 +2,14 @@
 // through methods so autosave, list ordering and counts stay consistent.
 
 import { api } from "../api";
+import { prefs, type SortBy } from "./prefs.svelte";
 import type { DocJSON, Folder, Note, NoteFilter, NoteSummary } from "../types";
 import { sameFilter } from "../types";
 
 const SAVE_DELAY_MS = 400;
 const SEARCH_DELAY_MS = 150;
+
+export type SettingsSection = "general" | "appearance" | "backup" | "shortcuts" | "about";
 
 export interface ConfirmRequest {
   title: string;
@@ -16,8 +19,21 @@ export interface ConfirmRequest {
   resolve: (ok: boolean) => void;
 }
 
-function byListOrder(a: NoteSummary, b: NoteSummary): number {
-  return Number(b.isPinned) - Number(a.isPinned) || b.updatedAt - a.updatedAt;
+/** Note-list order: pinned first, then by the "Sort notes by" setting. */
+export function compareNotes(a: NoteSummary, b: NoteSummary, sortBy: SortBy = prefs.sortBy): number {
+  const pinned = Number(b.isPinned) - Number(a.isPinned);
+  if (pinned) return pinned;
+  switch (sortBy) {
+    case "created":
+      return b.createdAt - a.createdAt;
+    case "title":
+      return (
+        (a.title || "New Note").localeCompare(b.title || "New Note", undefined, { sensitivity: "base", numeric: true }) ||
+        b.updatedAt - a.updatedAt
+      );
+    default:
+      return b.updatedAt - a.updatedAt;
+  }
 }
 
 function toSummary(note: Note): NoteSummary {
@@ -37,8 +53,8 @@ class AppState {
   searchResults = $state<NoteSummary[] | null>(null);
   /** Bottom-of-window message. Errors stay longer than info messages. */
   toast = $state<{ kind: "error" | "info"; message: string } | null>(null);
-  /** The Backup & Restore window is open. */
-  showBackup = $state(false);
+  /** Section shown in the Settings window, or null when it's closed. */
+  settingsSection = $state<SettingsSection | null>(null);
   confirmRequest = $state<ConfirmRequest | null>(null);
   /** Bumped when the editor should take keyboard focus (e.g. after "New Note"). */
   focusEditorTick = $state(0);
@@ -127,7 +143,7 @@ class AppState {
   private replaceSummary(updated: NoteSummary) {
     const swap = (list: NoteSummary[]) => list.map((n) => (n.id === updated.id ? updated : n));
     this.notes = swap(this.notes);
-    if (!this.isTrash) this.notes.sort(byListOrder);
+    if (!this.isTrash) this.notes.sort((a, b) => compareNotes(a, b));
     if (this.searchResults) this.searchResults = swap(this.searchResults);
     if (this.current?.id === updated.id) {
       this.current = {
@@ -182,7 +198,13 @@ class AppState {
   private async loadNotes() {
     const notes = await this.guard(() => api.listNotes(this.filter));
     if (!notes) return;
-    this.notes = notes;
+    // Recently Deleted keeps the backend's order (most recently deleted first).
+    this.notes = this.isTrash ? notes : notes.sort((a, b) => compareNotes(a, b));
+  }
+
+  /** Re-apply the "Sort notes by" setting after it changes. */
+  resortNotes() {
+    if (!this.isTrash) this.notes = [...this.notes].sort((a, b) => compareNotes(a, b));
   }
 
   // ------------------------------------------------------------- autosave

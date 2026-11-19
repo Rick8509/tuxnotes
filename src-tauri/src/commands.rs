@@ -135,15 +135,6 @@ pub fn set_backup_preferences(
 }
 
 #[tauri::command]
-pub fn set_google_client(
-    state: State<'_, AppState>,
-    client_id: Option<String>,
-    client_secret: Option<String>,
-) -> BackupStatus {
-    state.backup.set_client(client_id, client_secret)
-}
-
-#[tauri::command]
 pub async fn google_sign_in(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -181,4 +172,29 @@ pub async fn restore_backup(
     id: String,
 ) -> CmdResult<RestoreResult> {
     state.backup.restore(&app, &id).await
+}
+
+// ------------------------------------------------------------------ about
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    version: String,
+    data_dir: String,
+    database: String,
+    config_dir: String,
+}
+
+/// Version and storage locations, for Settings → About.
+#[tauri::command]
+pub fn app_info(app: tauri::AppHandle) -> std::result::Result<AppInfo, String> {
+    use tauri::Manager;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(AppInfo {
+        version: app.package_info().version.to_string(),
+        database: data_dir.join("notes.db").display().to_string(),
+        data_dir: data_dir.display().to_string(),
+        config_dir: config_dir.display().to_string(),
+    })
 }

@@ -31,12 +31,12 @@ For Desktop apps Google says the client secret is not treated as confidential, b
 
 ## 4. Give the client to TuxNotes
 
-Pick one. They are listed in priority order; the first one found wins.
+Users never see or type these values. TuxNotes looks for the client in this order (the first one found wins):
 
 | Option | How | Good for |
 |---|---|---|
-| In the app | Backup → **Advanced** → paste the Client ID and Secret → Save | Personal builds, testing |
 | Environment variables at runtime | `TUXNOTES_GOOGLE_CLIENT_ID=… TUXNOTES_GOOGLE_CLIENT_SECRET=… npm run tauri dev` | Development |
+| Config file | On the client's page in Google Cloud, click **Download JSON** and save the file as `~/.config/io.github.tuxnotes.TuxNotes/google-client.json`. Use it as it is; there's nothing to edit. Then restart TuxNotes. | Your own builds and testing an installed copy |
 | Built into the binary | Set the same two variables **when building** (`npx tauri build`) | Official releases |
 
 ### Official releases (GitHub Actions)
@@ -45,6 +45,8 @@ Pick one. They are listed in priority order; the first one found wins.
    - `TUXNOTES_GOOGLE_CLIENT_ID`
    - `TUXNOTES_GOOGLE_CLIENT_SECRET`
 2. In `.github/workflows/release.yml`, uncomment the two lines that pass them to the build.
+
+If no client is found, the Backup window explains that Google Drive backup isn't available in that copy of TuxNotes.
 
 ## 5. Publishing (removing the 100-user limit)
 
@@ -63,7 +65,7 @@ Verification usually takes a few days.
 
 ## How it works (for reviewers)
 
-- **Sign-in:** the authorization code flow with PKCE (S256). TuxNotes opens the system browser and receives the redirect on a temporary `127.0.0.1` listener. Nothing is embedded in the app.
+- **Sign-in:** TuxNotes asks before opening the browser. It uses the authorization code flow with PKCE (S256) in the user's normal browser, receives the redirect on a temporary `127.0.0.1` listener, then carries on with what the user asked for (back up, or show the backups to restore). If the browser doesn't open, the user can open the sign-in link again or copy it.
 - **Tokens:** the refresh token is stored in the desktop keyring (Secret Service: GNOME Keyring, KWallet). If no keyring is available, it goes in `~/.local/share/io.github.tuxnotes.TuxNotes/google-token` with mode `0600`. Access tokens stay in memory only.
 - **Backups:** zip files (`manifest.json` plus a SQLite snapshot with a SHA-256 checksum), uploaded to a **TuxNotes Backups** folder in the user's Drive. Old backups beyond the "Keep" setting are deleted.
 - **Restore:** the backup is downloaded, checked against its checksum, opened, and run through SQLite's integrity check, all **before** anything is replaced. A local copy of the current notes is saved to `~/.local/share/io.github.tuxnotes.TuxNotes/safety/` first (the last 5 are kept).

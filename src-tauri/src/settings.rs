@@ -37,9 +37,6 @@ pub struct Settings {
     pub last_backup_error: Option<String>,
     /// Email of the connected Google account, for display only.
     pub google_account: Option<String>,
-    /// Optional user-provided OAuth client (overrides the built-in one).
-    pub google_client_id: Option<String>,
-    pub google_client_secret: Option<String>,
 }
 
 impl Default for Settings {
@@ -50,8 +47,6 @@ impl Default for Settings {
             last_backup_at: None,
             last_backup_error: None,
             google_account: None,
-            google_client_id: None,
-            google_client_secret: None,
         }
     }
 }

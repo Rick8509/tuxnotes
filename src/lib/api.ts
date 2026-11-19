@@ -6,6 +6,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type {
   AutoBackup,
+  AppInfo,
   BackupInfo,
   BackupStatus,
   DocJSON,
@@ -60,12 +61,12 @@ export const api = {
   backupStatus: () => call<BackupStatus>("backup_status"),
   setBackupPreferences: (autoBackup: AutoBackup, keepBackups: number) =>
     call<BackupStatus>("set_backup_preferences", { autoBackup, keepBackups }),
-  setGoogleClient: (clientId: string | null, clientSecret: string | null) =>
-    call<BackupStatus>("set_google_client", { clientId, clientSecret }),
   googleSignIn: () => call<BackupStatus>("google_sign_in"),
   googleCancelSignIn: () => call<void>("google_cancel_sign_in"),
   googleSignOut: () => call<BackupStatus>("google_sign_out"),
   backupNow: () => call<BackupInfo>("backup_now"),
   listBackups: () => call<BackupInfo[]>("list_backups"),
   restoreBackup: (id: string) => call<RestoreResult>("restore_backup", { id }),
+
+  appInfo: () => call<AppInfo>("app_info"),
 };

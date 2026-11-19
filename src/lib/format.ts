@@ -66,18 +66,29 @@ export function dateSection(timestamp: number, now: Date = new Date(), locale?: 
   return String(date.getFullYear());
 }
 
-/** Split an already-sorted list into consecutive sections by `dateSection`. */
+/** Split an already-sorted list into consecutive sections by `dateSection` of `key` (default: last edit). */
 export function groupByDate<T extends { updatedAt: number }>(
   notes: T[],
   now: Date = new Date(),
   locale?: string,
+  key: (note: T) => number = (note) => note.updatedAt,
 ): { label: string; notes: T[] }[] {
   const groups: { label: string; notes: T[] }[] = [];
   for (const note of notes) {
-    const label = dateSection(note.updatedAt, now, locale);
+    const label = dateSection(key(note), now, locale);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.notes.push(note);
     else groups.push({ label, notes: [note] });
   }
   return groups;
+}
+
+/** "Today at 2:05 PM", "Yesterday at 9:00 AM", otherwise the full date and time. */
+export function formatRelativeDateTime(timestamp: number, now: Date = new Date(), locale?: string): string {
+  const date = new Date(timestamp);
+  const daysAgo = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  const time = date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  if (daysAgo <= 0) return `Today at ${time}`;
+  if (daysAgo === 1) return `Yesterday at ${time}`;
+  return formatEditorDate(timestamp, locale);
 }

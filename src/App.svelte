@@ -4,10 +4,10 @@
   import { isTauri } from "./lib/api";
   import { app } from "./lib/stores/app.svelte";
   import { ui } from "./lib/stores/ui.svelte";
-  import BackupDialog from "./lib/components/BackupDialog.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import NoteList from "./lib/components/NoteList.svelte";
+  import SettingsDialog from "./lib/components/SettingsDialog.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
 
   onMount(() => {
@@ -53,7 +53,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (app.confirmRequest || app.showBackup) return;
+    if (app.confirmRequest || app.settingsSection) return;
 
     if (e.key === "F11") {
       e.preventDefault();
@@ -81,7 +81,10 @@
       return;
     }
 
-    if (key === "n" && !e.shiftKey) {
+    if (e.key === ",") {
+      e.preventDefault();
+      app.settingsSection = "general";
+    } else if (key === "n" && !e.shiftKey) {
       e.preventDefault();
       void app.newNote();
     } else if (key === "n" && e.shiftKey) {
@@ -118,8 +121,8 @@
     <div class="overlay-scrim" role="presentation" onmousedown={() => ui.closeOverlay()}></div>
   {/if}
 
-  {#if app.showBackup}
-    <BackupDialog />
+  {#if app.settingsSection}
+    <SettingsDialog />
   {/if}
   <ConfirmDialog />
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateSection, daysUntilPurge, formatBytes, formatListDate, groupByDate, purgeLabel } from "./format";
+import { dateSection, daysUntilPurge, formatBytes, formatListDate, formatRelativeDateTime, groupByDate, purgeLabel } from "./format";
 
 const now = new Date(2026, 10, 18, 15, 30); // Wed 18 Nov 2026, 15:30 local time
 
@@ -78,5 +78,20 @@ describe("groupByDate", () => {
       ["Previous 7 Days", [3, 4]],
     ]);
     expect(groupByDate([], now)).toEqual([]);
+  });
+
+  it("can group by another date, e.g. creation", () => {
+    const day = 24 * 60 * 60 * 1000;
+    const t = now.getTime();
+    const notes = [{ updatedAt: t, createdAt: t - 3 * day }];
+    expect(groupByDate(notes, now, undefined, (n) => n.createdAt)[0].label).toBe("Previous 7 Days");
+  });
+});
+
+describe("formatRelativeDateTime", () => {
+  it("uses Today / Yesterday, then the full date", () => {
+    expect(formatRelativeDateTime(new Date(2026, 10, 18, 9, 5).getTime(), now, "en-GB")).toBe("Today at 9:05");
+    expect(formatRelativeDateTime(new Date(2026, 10, 17, 21, 0).getTime(), now, "en-GB")).toBe("Yesterday at 21:00");
+    expect(formatRelativeDateTime(new Date(2026, 10, 10, 8, 0).getTime(), now, "en-GB")).toContain("2026");
   });
 });

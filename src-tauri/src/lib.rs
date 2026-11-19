@@ -1,6 +1,7 @@
 mod backup_service;
 mod commands;
 mod credentials;
+mod google_client;
 mod settings;
 
 use std::sync::Mutex;
@@ -91,13 +92,13 @@ pub fn run() {
             commands::discard_note_if_blank,
             commands::backup_status,
             commands::set_backup_preferences,
-            commands::set_google_client,
             commands::google_sign_in,
             commands::google_cancel_sign_in,
             commands::google_sign_out,
             commands::backup_now,
             commands::list_backups,
             commands::restore_backup,
+            commands::app_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TuxNotes");

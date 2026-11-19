@@ -50,7 +50,7 @@ export function sameFilter(a: NoteFilter, b: NoteFilter): boolean {
 
 export type AutoBackup = "off" | "daily" | "weekly";
 export type BackupBusy = "signingIn" | "backingUp" | "restoring";
-export type ClientSource = "builtIn" | "custom" | "environment" | "none";
+export type ClientSource = "environment" | "configFile" | "builtIn" | "none";
 
 export interface BackupStatus {
   clientSource: ClientSource;
@@ -77,4 +77,11 @@ export interface RestoreResult {
   folderCount: number;
   backupCreatedAt: number;
   safetyCopy: string;
+}
+
+export interface AppInfo {
+  version: string;
+  dataDir: string;
+  database: string;
+  configDir: string;
 }

@@ -1,4 +1,5 @@
-/* TuxNotes design tokens. Light is the default; dark follows the system. */
+/* TuxNotes design tokens. Light is the default; <html data-theme="dark"> switches to dark.
+   The theme is chosen in Settings (System follows the desktop) — see stores/prefs.svelte.ts. */
 
 :root {
   --font-ui: "Inter", system-ui, -apple-system, "Cantarell", "Segoe UI", sans-serif;
@@ -42,37 +43,35 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --accent: #f2b80f;
-    --accent-strong: #ffc933;
-    --accent-contrast: #1d1d1f;
+:root[data-theme="dark"] {
+  --accent: #f2b80f;
+  --accent-strong: #ffc933;
+  --accent-contrast: #1d1d1f;
 
-    --text: #f5f5f7;
-    --text-secondary: #a1a1a6;
-    --text-tertiary: #6e6e73;
+  --text: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --text-tertiary: #6e6e73;
 
-    --bg-sidebar: #232325;
-    --bg-list: #1c1c1e;
-    --bg-editor: #1c1c1e;
-    --bg-hover: rgba(255, 255, 255, 0.06);
-    --bg-active: rgba(255, 255, 255, 0.1);
-    --bg-input: rgba(255, 255, 255, 0.08);
+  --bg-sidebar: #232325;
+  --bg-list: #1c1c1e;
+  --bg-editor: #1c1c1e;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --bg-input: rgba(255, 255, 255, 0.08);
 
-    --sel-sidebar: rgba(255, 255, 255, 0.12);
-    --sel-list: #5e4d14;
-    --sel-list-text: #f5f5f7;
+  --sel-sidebar: rgba(255, 255, 255, 0.12);
+  --sel-list: #5e4d14;
+  --sel-list-text: #f5f5f7;
 
-    --separator: #2f2f32;
-    --separator-strong: #3a3a3d;
+  --separator: #2f2f32;
+  --separator-strong: #3a3a3d;
 
-    --danger: #ff453a;
-    --window-border: rgba(255, 255, 255, 0.14);
-    --sel-list-inactive: #3a3a3c;
-    --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  --danger: #ff453a;
+  --window-border: rgba(255, 255, 255, 0.14);
+  --sel-list-inactive: #3a3a3c;
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
 
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 *,

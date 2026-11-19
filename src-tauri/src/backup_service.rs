@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tuxnotes_core::Store;
@@ -16,7 +16,12 @@ use tuxnotes_gdrive::{DriveClient, LoopbackReceiver, OAuthClient, Pkce, Tokens, 
 
 use crate::AppState;
 use crate::credentials::TokenVault;
-use crate::settings::{AutoBackup, Settings, SettingsStore};
+use crate::google_client::{self, ClientSource};
+use crate::settings::{AutoBackup, SettingsStore};
+
+/// Event carrying the Google sign-in URL, so the UI can offer "Copy link"
+/// if the browser didn't open.
+pub const SIGN_IN_URL_EVENT: &str = "google-sign-in-url";
 
 const DRIVE_FOLDER_NAME: &str = "TuxNotes Backups";
 const APP_TAG_KEY: &str = "tuxnotes";
@@ -26,10 +31,6 @@ const SAFETY_PREFIX: &str = "tuxnotes-before-restore-";
 const SAFETY_KEEP: usize = 5;
 /// Largest backup we're willing to download into memory.
 const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
-
-/// OAuth client compiled into release builds (set in CI from repository secrets).
-const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("TUXNOTES_GOOGLE_CLIENT_ID");
-const BUILT_IN_CLIENT_SECRET: Option<&str> = option_env!("TUXNOTES_GOOGLE_CLIENT_SECRET");
 
 pub type CmdResult<T> = Result<T, String>;
 
@@ -43,15 +44,6 @@ pub enum Busy {
     SigningIn,
     BackingUp,
     Restoring,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ClientSource {
-    BuiltIn,
-    Custom,
-    Environment,
-    None,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +85,7 @@ pub struct BackupService {
     settings: SettingsStore,
     vault: TokenVault,
     data_dir: PathBuf,
+    config_dir: PathBuf,
     db_path: PathBuf,
     app_version: String,
     /// Cached access token (refresh token lives in the vault).
@@ -135,6 +128,7 @@ impl BackupService {
             settings: SettingsStore::load(config_dir.join("settings.json")),
             vault,
             data_dir,
+            config_dir,
             db_path,
             app_version,
             session: AsyncMutex::new(None),
@@ -160,31 +154,14 @@ impl BackupService {
 
     // ------------------------------------------------------------ status & prefs
 
-    fn oauth_client(&self, settings: &Settings) -> (ClientSource, Option<OAuthClient>) {
-        let non_empty =
-            |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        if let Some(id) = non_empty(settings.google_client_id.clone()) {
-            let secret = non_empty(settings.google_client_secret.clone());
-            return (ClientSource::Custom, Some(OAuthClient::google(id, secret)));
-        }
-        if let Some(id) = non_empty(std::env::var("TUXNOTES_GOOGLE_CLIENT_ID").ok()) {
-            let secret = non_empty(std::env::var("TUXNOTES_GOOGLE_CLIENT_SECRET").ok());
-            return (
-                ClientSource::Environment,
-                Some(OAuthClient::google(id, secret)),
-            );
-        }
-        if let Some(id) = non_empty(BUILT_IN_CLIENT_ID.map(String::from)) {
-            let secret = non_empty(BUILT_IN_CLIENT_SECRET.map(String::from));
-            return (ClientSource::BuiltIn, Some(OAuthClient::google(id, secret)));
-        }
-        (ClientSource::None, None)
+    fn oauth_client(&self) -> (ClientSource, Option<OAuthClient>) {
+        google_client::resolve(&self.config_dir)
     }
 
     pub fn status(&self) -> BackupStatus {
         let s = self.settings.get();
         BackupStatus {
-            client_source: self.oauth_client(&s).0,
+            client_source: self.oauth_client().0,
             signed_in: *self.signed_in.lock().unwrap(),
             account: s.google_account.clone(),
             busy: *self.busy.lock().unwrap(),
@@ -199,18 +176,6 @@ impl BackupService {
         self.settings.update(|s| {
             s.auto_backup = auto_backup;
             s.keep_backups = keep_backups;
-        });
-        self.status()
-    }
-
-    pub fn set_client(
-        &self,
-        client_id: Option<String>,
-        client_secret: Option<String>,
-    ) -> BackupStatus {
-        self.settings.update(|s| {
-            s.google_client_id = client_id;
-            s.google_client_secret = client_secret;
         });
         self.status()
     }
@@ -231,10 +196,10 @@ impl BackupService {
 
     pub async fn sign_in(&self, app: &AppHandle) -> CmdResult<BackupStatus> {
         let (_lock, _busy) = self.begin(Busy::SigningIn)?;
-        let (_, client) = self.oauth_client(&self.settings.get());
+        let (_, client) = self.oauth_client();
         let client = client.ok_or(
-            "Google Drive backup isn't set up in this build. Add your own Google OAuth client \
-             under “Advanced” (see docs/google-setup.md).",
+            "Google Drive backup isn't available in this copy of TuxNotes \
+             (no Google sign-in client is configured).",
         )?;
 
         let receiver = LoopbackReceiver::bind().await.map_err(err)?;
@@ -242,9 +207,13 @@ impl BackupService {
         let pkce = Pkce::generate();
         let state = random_state();
         let url = client.authorization_url(&redirect_uri, &pkce, &state);
-        app.opener()
-            .open_url(&url, None::<&str>)
-            .map_err(|e| format!("Couldn't open your web browser: {e}"))?;
+        // Give the UI the link first, so "Copy link" works even if no browser opens.
+        let _ = app.emit(SIGN_IN_URL_EVENT, &url);
+        if let Err(e) = app.opener().open_url(&url, None::<&str>) {
+            log::warn!(
+                "couldn't open the web browser ({e}); waiting for the user to open the link"
+            );
+        }
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
         *self.cancel_sign_in.lock().unwrap() = Some(cancel_tx);
@@ -302,7 +271,7 @@ impl BackupService {
             .await
             .map_err(err)?;
         // Best effort: forget the account locally even if revoking fails (e.g. offline).
-        if let (Some(token), (_, Some(client))) = (refresh, self.oauth_client(&self.settings.get()))
+        if let (Some(token), (_, Some(client))) = (refresh, self.oauth_client())
             && let Err(e) = client.revoke(&self.http, &token).await
         {
             log::warn!("could not revoke Google token: {e}");
@@ -334,8 +303,9 @@ impl BackupService {
             .await
             .map_err(err)?
             .ok_or("You're not signed in to Google Drive.")?;
-        let (_, client) = self.oauth_client(&self.settings.get());
-        let client = client.ok_or("Google Drive backup isn't set up in this build.")?;
+        let (_, client) = self.oauth_client();
+        let client =
+            client.ok_or("Google Drive backup isn't available in this copy of TuxNotes.")?;
         match client.refresh(&self.http, &refresh).await {
             Ok(tokens) => {
                 let access = tokens.access_token.clone();
