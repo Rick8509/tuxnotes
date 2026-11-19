@@ -26,8 +26,23 @@ pub fn list_folders(state: State<'_, AppState>) -> Result<Vec<Folder>> {
 }
 
 #[tauri::command]
-pub fn create_folder(state: State<'_, AppState>, name: String) -> Result<Folder> {
-    store(&state)?.create_folder(&name)
+pub fn create_folder(
+    state: State<'_, AppState>,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<Folder> {
+    store(&state)?.create_subfolder(&name, parent_id.as_deref())
+}
+
+/// Nest or reorder: put folder `id` into `parent_id` (None = top level) at position `index`.
+#[tauri::command]
+pub fn move_folder(
+    state: State<'_, AppState>,
+    id: String,
+    parent_id: Option<String>,
+    index: usize,
+) -> Result<Folder> {
+    store(&state)?.move_folder(&id, parent_id.as_deref(), index)
 }
 
 #[tauri::command]

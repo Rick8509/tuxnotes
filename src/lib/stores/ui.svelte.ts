@@ -9,6 +9,7 @@ export const LIST = { min: 220, max: 480, default: 300 };
 export const EDITOR_MIN = 360;
 
 interface Persisted {
+  collapsedFolders?: string[];
   sidebarVisible: boolean;
   listVisible: boolean;
   sidebarWidth: number;
@@ -31,6 +32,8 @@ class UiState {
   fullscreen = $state(false);
   /** True while a divider is being dragged (disables the column animation). */
   resizing = $state(false);
+  /** Folders whose subfolders are hidden in the sidebar. */
+  collapsedFolders = $state<Set<string>>(new Set());
 
   constructor() {
     try {
@@ -41,6 +44,7 @@ class UiState {
         this.listVisible = p.listVisible ?? true;
         this.sidebarWidth = clamp(p.sidebarWidth ?? SIDEBAR.default, SIDEBAR.min, SIDEBAR.max);
         this.listWidth = clamp(p.listWidth ?? LIST.default, LIST.min, LIST.max);
+        this.collapsedFolders = new Set(Array.isArray(p.collapsedFolders) ? p.collapsedFolders : []);
       }
     } catch {
       /* corrupt prefs: keep defaults */
@@ -53,6 +57,7 @@ class UiState {
       listVisible: this.listVisible,
       sidebarWidth: this.sidebarWidth,
       listWidth: this.listWidth,
+      collapsedFolders: [...this.collapsedFolders],
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
@@ -105,6 +110,19 @@ class UiState {
     this.listVisible = !this.listVisible;
     this.sidebarOverlay = false;
     this.save();
+  }
+
+  toggleFolder(id: string) {
+    const next = new Set(this.collapsedFolders);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.collapsedFolders = next;
+    this.save();
+  }
+
+  expandFolder(id: string) {
+    if (!this.collapsedFolders.has(id)) return;
+    this.toggleFolder(id);
   }
 
   closeOverlay() {

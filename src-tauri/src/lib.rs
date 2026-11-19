@@ -96,6 +96,7 @@ pub fn run() {
             commands::create_folder,
             commands::rename_folder,
             commands::delete_folder,
+            commands::move_folder,
             commands::list_notes,
             commands::get_note,
             commands::create_note,

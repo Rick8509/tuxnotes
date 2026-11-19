@@ -5,6 +5,7 @@ import { api } from "../api";
 import { prefs, type SortBy } from "./prefs.svelte";
 import type { DocJSON, Folder, Note, NoteFilter, NoteSummary } from "../types";
 import { sameFilter } from "../types";
+import { descendantIds } from "../folders";
 
 const SAVE_DELAY_MS = 400;
 const SEARCH_DELAY_MS = 150;
@@ -64,6 +65,8 @@ class AppState {
   findInNoteTick = $state(0);
   /** Show the inline "new folder" field in the sidebar. */
   creatingFolder = $state(false);
+  /** Where the folder being created goes (null = top level). */
+  newFolderParent = $state<string | null>(null);
 
   private pending: { id: string; getContent: () => DocJSON } | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -407,8 +410,15 @@ class AppState {
 
   // --------------------------------------------------------------- folders
 
+  /** Show the inline "new folder" field, at the top level or inside `parentId`. */
+  startNewFolder(parentId: string | null = null) {
+    this.newFolderParent = parentId;
+    this.creatingFolder = true;
+  }
+
   async createFolder(name: string): Promise<boolean> {
-    const folder = await this.guard(() => api.createFolder(name));
+    const parentId = this.newFolderParent;
+    const folder = await this.guard(() => api.createFolder(name, parentId));
     if (!folder) return false;
     this.creatingFolder = false;
     await this.refreshCounts();
@@ -423,16 +433,27 @@ class AppState {
     return true;
   }
 
+  /** Nest or reorder a folder (drag and drop in the sidebar). */
+  async moveFolder(id: string, parentId: string | null, index: number) {
+    const moved = await this.guard(() => api.moveFolder(id, parentId, index));
+    if (moved) await this.refreshCounts();
+  }
+
   async deleteFolder(id: string) {
     const folder = this.folders.find((f) => f.id === id);
     if (!folder) return;
-    const n = folder.noteCount;
+    const subtree = [id, ...descendantIds(this.folders, id)];
+    const subfolders = subtree.length - 1;
+    const n = this.folders.filter((f) => subtree.includes(f.id)).reduce((sum, f) => sum + f.noteCount, 0);
+    const parts = [
+      subfolders ? `Its ${subfolders} subfolder${subfolders === 1 ? "" : "s"} will be deleted too.` : "",
+      n === 0
+        ? subfolders ? "" : "This folder is empty."
+        : `${n} note${n === 1 ? "" : "s"} will be moved to Recently Deleted.`,
+    ];
     const ok = await this.confirm({
       title: `Delete “${folder.name}”?`,
-      message:
-        n === 0
-          ? "This folder is empty."
-          : `${n} note${n === 1 ? "" : "s"} in this folder will be moved to Recently Deleted.`,
+      message: parts.filter(Boolean).join(" ") || "This folder is empty.",
       confirmLabel: "Delete Folder",
       destructive: true,
     });
@@ -441,7 +462,7 @@ class AppState {
     const moved = await this.guard(() => api.deleteFolder(id));
     if (moved === undefined) return;
     await this.refreshCounts();
-    if (this.filter.kind === "folder" && this.filter.folderId === id) {
+    if (this.filter.kind === "folder" && subtree.includes(this.filter.folderId)) {
       await this.setFilter({ kind: "all" });
     } else {
       await this.loadNotes();

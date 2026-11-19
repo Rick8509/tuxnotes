@@ -41,7 +41,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 
 export const api = {
   listFolders: () => call<Folder[]>("list_folders"),
-  createFolder: (name: string) => call<Folder>("create_folder", { name }),
+  createFolder: (name: string, parentId: string | null = null) => call<Folder>("create_folder", { name, parentId }),
+  moveFolder: (id: string, parentId: string | null, index: number) => call<Folder>("move_folder", { id, parentId, index }),
   renameFolder: (id: string, name: string) => call<Folder>("rename_folder", { id, name }),
   deleteFolder: (id: string) => call<number>("delete_folder", { id }),
 

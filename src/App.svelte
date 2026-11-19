@@ -94,7 +94,7 @@
     } else if (key === "n" && e.shiftKey) {
       e.preventDefault();
       if (!ui.sidebarShown) ui.toggleSidebar();
-      app.creatingFolder = true;
+      app.startNewFolder(null);
     } else if (key === "f") {
       e.preventDefault();
       // Like Apple Notes: Ctrl+F in a note finds in that note; Ctrl+Shift+F (or Ctrl+F

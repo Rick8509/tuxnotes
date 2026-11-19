@@ -2,6 +2,7 @@
   import { Folder as FolderIcon, PanelLeftOpen, Search, SquarePen, X } from "@lucide/svelte";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { formatListDate, groupByDate, purgeLabel } from "../format";
+  import { visibleRows } from "../folders";
   import { app } from "../stores/app.svelte";
   import { prefs } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
@@ -112,8 +113,9 @@
           { label: note.isPinned ? "Unpin Note" : "Pin Note", action: () => app.togglePin(note.id) },
           { kind: "separator" },
           { kind: "heading", label: "Move to" },
-          ...app.folders.map((f) => ({
-            label: f.name,
+          // All folders in tree order; subfolders indented under their parent.
+          ...visibleRows(app.folders).map(({ folder: f, depth }) => ({
+            label: `${"\u2003".repeat(depth)}${f.name}`,
             action: () => app.moveNote(note.id, f.id),
             disabled: f.id === note.folderId,
           })),

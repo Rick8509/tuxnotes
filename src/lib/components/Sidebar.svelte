@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Folder as FolderIcon, FolderPlus, NotebookText, PanelLeftClose, Settings, Trash2 } from "@lucide/svelte";
-  import { NOTE_DRAG_TYPE } from "../dnd";
+  import { ChevronRight, Folder as FolderIcon, FolderPlus, NotebookText, PanelLeftClose, Settings, Trash2 } from "@lucide/svelte";
+  import { FOLDER_DRAG_TYPE, NOTE_DRAG_TYPE } from "../dnd";
+  import { childrenOf, dropPlacement, visibleRows, type DropZone } from "../folders";
   import { app } from "../stores/app.svelte";
   import { ui } from "../stores/ui.svelte";
   import type { Folder, NoteFilter } from "../types";
@@ -19,6 +20,8 @@
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
 
   const isActive = (f: NoteFilter) => !app.searchResults && sameFilter(app.filter, f);
+  /** The folder tree as rows (collapsed branches hidden). */
+  const rows = $derived(visibleRows(app.folders, ui.collapsedFolders));
 
   function open(filter: NoteFilter) {
     ui.closeOverlay();
@@ -50,6 +53,69 @@
     else void app.moveNote(id, target);
   }
 
+  // ---------------------------------------------- drag folders to nest/reorder
+  let draggingFolder: string | null = null;
+  /** Where the dragged folder would land: before/after a row, or inside it. "root" = the Folders label. */
+  let folderDrop = $state<{ id: string; zone: DropZone } | null>(null);
+
+  function folderDragStart(e: DragEvent, folder: Folder) {
+    if (folder.isDefault || !e.dataTransfer) return;
+    draggingFolder = folder.id;
+    e.dataTransfer.setData(FOLDER_DRAG_TYPE, folder.id);
+    e.dataTransfer.setData("text/plain", folder.name);
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  function folderDragEnd() {
+    draggingFolder = null;
+    folderDrop = null;
+  }
+
+  function rowDragOver(e: DragEvent, folder: Folder) {
+    if (e.dataTransfer?.types.includes(NOTE_DRAG_TYPE)) return dragOver(e, folder.id);
+    if (!draggingFolder || !e.dataTransfer?.types.includes(FOLDER_DRAG_TYPE)) return;
+    // Top quarter: before, bottom quarter: after, middle: inside.
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    const zone: DropZone = y < 0.28 ? "before" : y > 0.72 ? "after" : "inside";
+    if (!dropPlacement(app.folders, draggingFolder, folder, zone)) {
+      folderDrop = null;
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    folderDrop = { id: folder.id, zone };
+  }
+
+  function rowDrop(e: DragEvent, folder: Folder) {
+    if (e.dataTransfer?.types.includes(NOTE_DRAG_TYPE)) return drop(e, folder.id);
+    const dragged = draggingFolder;
+    const zone = folderDrop?.id === folder.id ? folderDrop.zone : null;
+    folderDragEnd();
+    if (!dragged || !zone) return;
+    const place = dropPlacement(app.folders, dragged, folder, zone);
+    if (!place) return;
+    e.preventDefault();
+    if (zone === "inside") ui.expandFolder(folder.id);
+    void app.moveFolder(dragged, place.parentId, place.index);
+  }
+
+  /** Dropping a folder on the "Folders" label moves it to the top level, at the end. */
+  function rootDragOver(e: DragEvent) {
+    if (!draggingFolder || !e.dataTransfer?.types.includes(FOLDER_DRAG_TYPE)) return;
+    e.preventDefault();
+    folderDrop = { id: "root", zone: "inside" };
+  }
+
+  function rootDrop(e: DragEvent) {
+    const dragged = draggingFolder;
+    folderDragEnd();
+    if (!dragged) return;
+    e.preventDefault();
+    const top = childrenOf(app.folders, null).filter((f) => !f.isDefault && f.id !== dragged);
+    void app.moveFolder(dragged, null, top.length);
+  }
+
   function startRename(folder: Folder) {
     if (folder.isDefault) return;
     renamingId = folder.id;
@@ -71,8 +137,9 @@
     renamingId = null;
   }
 
-  function startCreate() {
-    app.creatingFolder = true;
+  function startCreate(parentId: string | null = null) {
+    if (parentId) ui.expandFolder(parentId);
+    app.startNewFolder(parentId);
   }
 
   async function commitCreate() {
@@ -102,6 +169,7 @@
       y: e.clientY,
       items: [
         { label: "New Note", action: () => app.setFilter({ kind: "folder", folderId: folder.id }).then(() => app.newNote()) },
+        { label: "New Subfolder…", action: () => startCreate(folder.id) },
         { kind: "separator" },
         { label: "Rename Folder", action: () => startRename(folder), disabled: folder.isDefault },
         { label: "Delete Folder", action: () => app.deleteFolder(folder.id), disabled: folder.isDefault, danger: true },
@@ -139,66 +207,99 @@
   </header>
 
   <nav class="scroll" aria-label="Folders">
-    <button class="row" class:active={isActive({ kind: "all" })} onclick={() => open({ kind: "all" })}>
+    <button class="row plain" class:active={isActive({ kind: "all" })} onclick={() => open({ kind: "all" })}>
       <NotebookText size={16} />
       <span class="name">All Notes</span>
       <span class="count">{app.allCount}</span>
     </button>
 
-    <div class="section">Folders</div>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="section" class:drop-target={folderDrop?.id === "root"} ondragover={rootDragOver} ondragleave={() => folderDrop?.id === "root" && (folderDrop = null)} ondrop={rootDrop}>Folders</div>
 
-    {#each app.folders as folder (folder.id)}
-      {#if renamingId === folder.id}
+    {#snippet newFolderRow(depth: number)}
+      <div class="tree-row" style:--depth={depth}>
+        <span class="twisty-space"></span>
         <div class="row editing">
           <FolderIcon size={16} />
           <input
             class="name-input"
-            bind:value={draftName}
+            bind:value={newFolderName}
             use:autofocus
             maxlength="100"
-            aria-label="Folder name"
-            onkeydown={(e) => nameKeys(e, commitRename, () => (renamingId = null))}
-            onblur={commitRename}
+            placeholder={app.newFolderParent ? "New Subfolder" : "New Folder"}
+            aria-label="New folder name"
+            onkeydown={(e) => nameKeys(e, commitCreate, () => (app.creatingFolder = false))}
+            onblur={commitCreate}
           />
         </div>
-      {:else}
-        <button
-          class="row"
-          class:active={isActive({ kind: "folder", folderId: folder.id })}
-          class:drop-target={dropTarget === folder.id}
-          onclick={() => open({ kind: "folder", folderId: folder.id })}
-          ondblclick={() => startRename(folder)}
-          oncontextmenu={(e) => folderMenu(e, folder)}
-          ondragover={(e) => dragOver(e, folder.id)}
-          ondragleave={(e) => dragLeave(e, folder.id)}
-          ondrop={(e) => drop(e, folder.id)}
-        >
-          <FolderIcon size={16} />
-          <span class="name">{folder.name}</span>
-          <span class="count">{folder.noteCount}</span>
-        </button>
+      </div>
+    {/snippet}
+
+    {#each rows as { folder, depth, hasChildren } (folder.id)}
+      {@const collapsed = ui.collapsedFolders.has(folder.id)}
+      <div
+        class="tree-row"
+        style:--depth={depth}
+        class:drop-before={folderDrop?.id === folder.id && folderDrop.zone === "before"}
+        class:drop-after={folderDrop?.id === folder.id && folderDrop.zone === "after"}
+      >
+        {#if hasChildren}
+          <button class="twisty" class:open={!collapsed} aria-label={collapsed ? `Expand ${folder.name}` : `Collapse ${folder.name}`} onclick={() => ui.toggleFolder(folder.id)}>
+            <ChevronRight size={13} />
+          </button>
+        {:else}
+          <span class="twisty-space"></span>
+        {/if}
+        {#if renamingId === folder.id}
+          <div class="row editing">
+            <FolderIcon size={16} />
+            <input
+              class="name-input"
+              bind:value={draftName}
+              use:autofocus
+              maxlength="100"
+              aria-label="Folder name"
+              onkeydown={(e) => nameKeys(e, commitRename, () => (renamingId = null))}
+              onblur={commitRename}
+            />
+          </div>
+        {:else}
+          <button
+            class="row"
+            class:active={isActive({ kind: "folder", folderId: folder.id })}
+            class:drop-target={dropTarget === folder.id || (folderDrop?.id === folder.id && folderDrop.zone === "inside")}
+            draggable={!folder.isDefault}
+            data-folder-id={folder.id}
+            onclick={() => open({ kind: "folder", folderId: folder.id })}
+            ondblclick={() => startRename(folder)}
+            oncontextmenu={(e) => folderMenu(e, folder)}
+            ondragstart={(e) => folderDragStart(e, folder)}
+            ondragend={folderDragEnd}
+            ondragover={(e) => rowDragOver(e, folder)}
+            ondragleave={(e) => {
+              dragLeave(e, folder.id);
+              if (folderDrop?.id === folder.id && !(e.currentTarget as Node).contains(e.relatedTarget as Node | null)) folderDrop = null;
+            }}
+            ondrop={(e) => rowDrop(e, folder)}
+          >
+            <FolderIcon size={16} />
+            <span class="name">{folder.name}</span>
+            <span class="count">{folder.noteCount}</span>
+          </button>
+        {/if}
+      </div>
+      {#if app.creatingFolder && app.newFolderParent === folder.id}
+        {@render newFolderRow(depth + 1)}
       {/if}
     {/each}
 
-    {#if app.creatingFolder}
-      <div class="row editing">
-        <FolderIcon size={16} />
-        <input
-          class="name-input"
-          bind:value={newFolderName}
-          use:autofocus
-          maxlength="100"
-          placeholder="New Folder"
-          aria-label="New folder name"
-          onkeydown={(e) => nameKeys(e, commitCreate, () => (app.creatingFolder = false))}
-          onblur={commitCreate}
-        />
-      </div>
+    {#if app.creatingFolder && !app.newFolderParent}
+      {@render newFolderRow(0)}
     {/if}
 
     {#if app.trashCount > 0 || app.isTrash || dropTarget !== null}
       <button
-        class="row"
+        class="row plain"
         class:active={isActive({ kind: "trash" })}
         class:drop-target={dropTarget === "trash"}
         onclick={() => open({ kind: "trash" })}
@@ -215,7 +316,7 @@
   </nav>
 
   <footer class="footer">
-    <button class="new-folder" onclick={startCreate} title="New Folder (Ctrl+Shift+N)">
+    <button class="new-folder" onclick={() => startCreate(null)} title="New Folder (Ctrl+Shift+N)">
       <FolderPlus size={16} />
       <span>New Folder</span>
     </button>
@@ -313,6 +414,62 @@
   }
   .row.active {
     background: var(--sel-sidebar);
+  }
+  /* Folder tree */
+  .tree-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding-left: calc(var(--depth, 0) * 14px);
+  }
+  .tree-row .row {
+    flex: 1;
+    min-width: 0;
+    padding-left: 4px;
+  }
+  .twisty,
+  .twisty-space {
+    flex: none;
+    width: 16px;
+    height: 24px;
+  }
+  .twisty {
+    display: grid;
+    place-items: center;
+    border-radius: 4px;
+    color: var(--text-tertiary);
+  }
+  .twisty:hover {
+    color: var(--text);
+  }
+  .twisty :global(svg) {
+    transition: transform 0.15s;
+  }
+  .twisty.open :global(svg) {
+    transform: rotate(90deg);
+  }
+  .row.plain {
+    padding-left: 20px;
+  }
+  /* Where a dragged folder will land between rows. */
+  .tree-row.drop-before::before,
+  .tree-row.drop-after::after {
+    content: "";
+    position: absolute;
+    left: calc(var(--depth, 0) * 14px + 18px);
+    right: 4px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+  .tree-row.drop-before::before {
+    top: -1px;
+  }
+  .tree-row.drop-after::after {
+    bottom: -1px;
+  }
+  .section.drop-target {
+    color: var(--accent-strong);
   }
   .row.drop-target {
     background: var(--accent);

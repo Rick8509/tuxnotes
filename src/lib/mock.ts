@@ -33,7 +33,7 @@ function load(): MockDb {
   }
   const t = now();
   return {
-    folders: [{ id: uid(), name: "Notes", isDefault: true, sortOrder: 0, createdAt: t, updatedAt: t }],
+    folders: [{ id: uid(), name: "Notes", isDefault: true, parentId: null, sortOrder: 0, createdAt: t, updatedAt: t }],
     notes: [],
   };
 }
@@ -67,15 +67,30 @@ function note(n: MockNote): Note {
   return structuredClone(rest);
 }
 
-function checkFolderName(name: string, existingId?: string): string {
+function checkFolderName(name: string, parentId: string | null, existingId?: string): string {
   const trimmed = name.trim();
   if (!trimmed) fail("Folder name can't be empty.");
   if ([...trimmed].length > 100) fail("Folder name can't be longer than 100 characters.");
   const lower = trimmed.toLowerCase();
-  if (db.folders.some((f) => f.id !== existingId && f.name.toLowerCase() === lower)) {
-    fail(`A folder named "${trimmed}" already exists.`);
+  if (db.folders.some((f) => f.id !== existingId && (f.parentId ?? null) === parentId && f.name.toLowerCase() === lower)) {
+    fail(`A folder named "${trimmed}" already exists here.`);
   }
   return trimmed;
+}
+
+function mockDescendants(id: string): string[] {
+  const out: string[] = [];
+  const queue = [id];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const f of db.folders.filter((x) => x.parentId === cur)) {
+      if (!out.includes(f.id)) {
+        out.push(f.id);
+        queue.push(f.id);
+      }
+    }
+  }
+  return out;
 }
 
 const byListOrder = (a: MockNote, b: MockNote) =>
@@ -88,12 +103,14 @@ const handlers: Record<string, (a: Args) => unknown> = {
     [...db.folders]
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.sortOrder - b.sortOrder)
       .map(withCount),
-  create_folder: ({ name }) => {
+  create_folder: ({ name, parentId }) => {
     const t = now();
+    if (parentId) folderById(parentId);
     const f = {
       id: uid(),
-      name: checkFolderName(name),
+      name: checkFolderName(name, parentId ?? null),
       isDefault: false,
+      parentId: parentId ?? null,
       sortOrder: Math.max(...db.folders.map((x) => x.sortOrder)) + 1,
       createdAt: t,
       updatedAt: t,
@@ -104,22 +121,36 @@ const handlers: Record<string, (a: Args) => unknown> = {
   rename_folder: ({ id, name }) => {
     const f = folderById(id);
     if (f.isDefault) fail("The default folder can't be renamed.");
-    f.name = checkFolderName(name, id);
+    f.name = checkFolderName(name, f.parentId ?? null, id);
     f.updatedAt = now();
+    return withCount(f);
+  },
+  move_folder: ({ id, parentId, index }) => {
+    const f = folderById(id);
+    if (f.isDefault) fail("The default folder can't be moved.");
+    if (parentId && (parentId === id || mockDescendants(id).includes(parentId))) fail("A folder can't be moved into itself.");
+    checkFolderName(f.name, parentId ?? null, id);
+    const siblings = db.folders
+      .filter((x) => (x.parentId ?? null) === (parentId ?? null) && x.id !== id && !x.isDefault)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    siblings.splice(Math.min(index, siblings.length), 0, f);
+    f.parentId = parentId ?? null;
+    siblings.forEach((x, i) => (x.sortOrder = i + 1));
     return withCount(f);
   },
   delete_folder: ({ id }) => {
     const f = folderById(id);
     if (f.isDefault) fail("The default folder can't be deleted.");
+    const doomed = [id, ...mockDescendants(id)];
     const t = now();
     let moved = 0;
-    for (const n of db.notes.filter((n) => n.folderId === id)) {
+    for (const n of db.notes.filter((n) => doomed.includes(n.folderId))) {
       n.folderId = defaultFolder().id;
       n.deletedAt ??= t;
       n.isPinned = false;
       moved++;
     }
-    db.folders = db.folders.filter((x) => x.id !== id);
+    db.folders = db.folders.filter((x) => !doomed.includes(x.id));
     return moved;
   },
   list_notes: ({ filter }) => {

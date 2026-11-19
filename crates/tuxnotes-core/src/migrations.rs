@@ -76,6 +76,11 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX attachments_note_idx ON attachments(note_id);
     "#,
+    // v3: subfolders. NULL parent = top level. Deleting a folder removes its subfolders.
+    r#"
+    ALTER TABLE folders ADD COLUMN parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE;
+    CREATE INDEX folders_parent_idx ON folders(parent_id);
+    "#,
 ];
 
 /// The schema version this build of TuxNotes writes.

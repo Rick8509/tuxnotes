@@ -7,8 +7,10 @@ use serde_json::Value;
 pub struct Folder {
     pub id: String,
     pub name: String,
-    /// The built-in "Notes" folder. It cannot be renamed or deleted.
+    /// The built-in "Notes" folder. It cannot be renamed, moved or deleted.
     pub is_default: bool,
+    /// The folder this one is inside, or `None` at the top level.
+    pub parent_id: Option<String>,
     pub sort_order: i64,
     pub note_count: i64,
     pub created_at: i64,

@@ -7,6 +7,8 @@ export interface Folder {
   id: string;
   name: string;
   isDefault: boolean;
+  /** The folder this one is inside, or null at the top level. */
+  parentId: string | null;
   sortOrder: number;
   noteCount: number;
   createdAt: number;

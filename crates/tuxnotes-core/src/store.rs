@@ -17,6 +17,8 @@ use crate::text;
 pub const DEFAULT_FOLDER_NAME: &str = "Notes";
 /// Maximum folder name length in characters.
 pub const MAX_FOLDER_NAME_CHARS: usize = 100;
+/// How deep folders can be nested.
+pub const MAX_FOLDER_DEPTH: usize = 5;
 /// Maximum size of one note's serialized document (protects against runaway input).
 pub const MAX_CONTENT_BYTES: usize = 20 * 1024 * 1024;
 /// How long notes stay in "Recently Deleted" before they are purged.
@@ -24,6 +26,8 @@ pub const TRASH_RETENTION_DAYS: i64 = 30;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
+const FOLDER_COLUMNS: &str = "f.id, f.name, f.is_default, f.sort_order, f.created_at, f.updated_at,
+     (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id AND n.deleted_at IS NULL), f.parent_id";
 const SUMMARY_COLUMNS: &str =
     "id, folder_id, title, snippet, is_pinned, created_at, updated_at, deleted_at";
 const NOTE_COLUMNS: &str =
@@ -108,14 +112,13 @@ impl Store {
             })?)
     }
 
-    /// All folders: the default folder first, then by creation order.
+    /// All folders, each level in its own order (the default folder first at the top level).
+    /// The tree is built from `parent_id`.
     pub fn list_folders(&self) -> Result<Vec<Folder>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT f.id, f.name, f.is_default, f.sort_order, f.created_at, f.updated_at,
-                    (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id AND n.deleted_at IS NULL)
-             FROM folders f
-             ORDER BY f.is_default DESC, f.sort_order, f.name COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {FOLDER_COLUMNS} FROM folders f
+             ORDER BY f.is_default DESC, f.sort_order, f.name COLLATE NOCASE"
+        ))?;
         let folders = stmt
             .query_map([], folder_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -125,9 +128,7 @@ impl Store {
     pub fn get_folder(&self, id: &str) -> Result<Folder> {
         self.conn
             .query_row(
-                "SELECT f.id, f.name, f.is_default, f.sort_order, f.created_at, f.updated_at,
-                        (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id AND n.deleted_at IS NULL)
-                 FROM folders f WHERE f.id = ?1",
+                &format!("SELECT {FOLDER_COLUMNS} FROM folders f WHERE f.id = ?1"),
                 [id],
                 folder_from_row,
             )
@@ -135,14 +136,28 @@ impl Store {
             .ok_or_else(|| Error::not_found("folder", id))
     }
 
+    /// A new folder at the top level.
     pub fn create_folder(&self, name: &str) -> Result<Folder> {
-        let name = self.validate_folder_name(name, None)?;
+        self.create_subfolder(name, None)
+    }
+
+    /// A new folder inside `parent_id` (or at the top level), placed last among its siblings.
+    pub fn create_subfolder(&self, name: &str, parent_id: Option<&str>) -> Result<Folder> {
+        if let Some(parent) = parent_id {
+            self.get_folder(parent)?;
+            if self.folder_depth(parent)? >= MAX_FOLDER_DEPTH {
+                return Err(Error::invalid(format!(
+                    "Folders can be nested at most {MAX_FOLDER_DEPTH} levels deep."
+                )));
+            }
+        }
+        let name = self.validate_folder_name(name, parent_id, None)?;
         let now = self.now();
         let id = Self::new_id();
         self.conn.execute(
-            "INSERT INTO folders (id, name, is_default, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, 0, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folders), ?3, ?3)",
-            params![id, name, now],
+            "INSERT INTO folders (id, name, is_default, parent_id, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, 0, ?3, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM folders), ?4, ?4)",
+            params![id, name, parent_id, now],
         )?;
         self.get_folder(&id)
     }
@@ -152,7 +167,7 @@ impl Store {
         if folder.is_default {
             return Err(Error::invalid("The default folder can't be renamed."));
         }
-        let name = self.validate_folder_name(name, Some(id))?;
+        let name = self.validate_folder_name(name, folder.parent_id.as_deref(), Some(id))?;
         self.conn.execute(
             "UPDATE folders SET name = ?2, updated_at = ?3 WHERE id = ?1",
             params![id, name, self.now()],
@@ -160,28 +175,144 @@ impl Store {
         self.get_folder(id)
     }
 
-    /// Delete a folder. Its notes move to "Recently Deleted" (and to the default
-    /// folder, so they have somewhere to go if restored). Returns how many notes moved.
+    /// Move a folder into `parent_id` (or to the top level) at position `index` among
+    /// its new siblings. Used for both nesting and reordering by drag and drop.
+    pub fn move_folder(
+        &mut self,
+        id: &str,
+        parent_id: Option<&str>,
+        index: usize,
+    ) -> Result<Folder> {
+        let folder = self.get_folder(id)?;
+        if folder.is_default {
+            return Err(Error::invalid("The default folder can't be moved."));
+        }
+        if let Some(parent) = parent_id {
+            self.get_folder(parent)?;
+            if parent == id || self.descendant_ids(id)?.iter().any(|d| d == parent) {
+                return Err(Error::invalid("A folder can't be moved into itself."));
+            }
+            if self.folder_depth(parent)? + self.subtree_height(id)? > MAX_FOLDER_DEPTH {
+                return Err(Error::invalid(format!(
+                    "Folders can be nested at most {MAX_FOLDER_DEPTH} levels deep."
+                )));
+            }
+        }
+        self.validate_folder_name(&folder.name, parent_id, Some(id))?;
+
+        // New order of the siblings, with the moved folder inserted at `index`.
+        let mut siblings: Vec<String> = self
+            .list_folders()?
+            .into_iter()
+            .filter(|f| f.parent_id.as_deref() == parent_id && f.id != id && !f.is_default)
+            .map(|f| f.id)
+            .collect();
+        siblings.insert(index.min(siblings.len()), id.to_string());
+
+        let now = self.now();
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE folders SET parent_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, parent_id, now],
+        )?;
+        for (i, sibling) in siblings.iter().enumerate() {
+            tx.execute(
+                "UPDATE folders SET sort_order = ?2 WHERE id = ?1",
+                params![sibling, i as i64 + 1],
+            )?;
+        }
+        tx.commit()?;
+        self.get_folder(id)
+    }
+
+    /// Delete a folder and all its subfolders. Their notes move to "Recently Deleted"
+    /// (and to the default folder, so they have somewhere to go if restored).
+    /// Returns how many notes moved.
     pub fn delete_folder(&mut self, id: &str) -> Result<usize> {
         let folder = self.get_folder(id)?;
         if folder.is_default {
             return Err(Error::invalid("The default folder can't be deleted."));
         }
+        let mut doomed = self.descendant_ids(id)?;
+        doomed.insert(0, id.to_string());
         let default_id = self.default_folder_id()?;
         let now = self.now();
         let tx = self.conn.transaction()?;
-        let moved = tx.execute(
-            "UPDATE notes
-             SET folder_id = ?2, deleted_at = COALESCE(deleted_at, ?3), is_pinned = 0
-             WHERE folder_id = ?1",
-            params![id, default_id, now],
-        )?;
-        tx.execute("DELETE FROM folders WHERE id = ?1", [id])?;
+        let mut moved = 0;
+        for folder_id in &doomed {
+            moved += tx.execute(
+                "UPDATE notes
+                 SET folder_id = ?2, deleted_at = COALESCE(deleted_at, ?3), is_pinned = 0
+                 WHERE folder_id = ?1",
+                params![folder_id, default_id, now],
+            )?;
+        }
+        // Deepest first, so no folder is removed before its subfolders.
+        for folder_id in doomed.iter().rev() {
+            tx.execute("DELETE FROM folders WHERE id = ?1", [folder_id])?;
+        }
         tx.commit()?;
         Ok(moved)
     }
 
-    fn validate_folder_name(&self, name: &str, existing_id: Option<&str>) -> Result<String> {
+    /// Every folder inside `id`, at any depth (parents before their children).
+    pub fn descendant_ids(&self, id: &str) -> Result<Vec<String>> {
+        let folders = self.list_folders()?;
+        let mut out: Vec<String> = Vec::new();
+        let mut queue = vec![id.to_string()];
+        while let Some(current) = queue.pop() {
+            for child in folders
+                .iter()
+                .filter(|f| f.parent_id.as_deref() == Some(current.as_str()))
+            {
+                if out.contains(&child.id) || child.id == id {
+                    continue; // never loop, even on damaged data
+                }
+                out.push(child.id.clone());
+                queue.push(child.id.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// 1 for a top-level folder, 2 for a folder inside it, and so on.
+    fn folder_depth(&self, id: &str) -> Result<usize> {
+        let mut depth = 1;
+        let mut current = self.get_folder(id)?;
+        while let Some(parent) = current.parent_id.clone() {
+            depth += 1;
+            if depth > 64 {
+                break; // damaged data: stop rather than loop
+            }
+            current = self.get_folder(&parent)?;
+        }
+        Ok(depth)
+    }
+
+    /// Levels in a folder's subtree: 1 for a folder without subfolders.
+    fn subtree_height(&self, id: &str) -> Result<usize> {
+        let mut max = 1;
+        for d in self.descendant_ids(id)? {
+            let mut levels = 1;
+            let mut current = self.get_folder(&d)?;
+            while let Some(parent) = current.parent_id.clone() {
+                levels += 1;
+                if parent == id || levels > 64 {
+                    break;
+                }
+                current = self.get_folder(&parent)?;
+            }
+            max = max.max(levels);
+        }
+        Ok(max)
+    }
+
+    fn validate_folder_name(
+        &self,
+        name: &str,
+        parent_id: Option<&str>,
+        existing_id: Option<&str>,
+    ) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::invalid("Folder name can't be empty."));
@@ -191,15 +322,17 @@ impl Store {
                 "Folder name can't be longer than {MAX_FOLDER_NAME_CHARS} characters."
             )));
         }
-        // SQLite's NOCASE only folds ASCII, so compare in Rust for full Unicode.
+        // Names must be unique among siblings. SQLite's NOCASE only folds ASCII,
+        // so compare in Rust for full Unicode.
         let lower = name.to_lowercase();
-        let taken = self
-            .list_folders()?
-            .into_iter()
-            .any(|f| Some(f.id.as_str()) != existing_id && f.name.to_lowercase() == lower);
+        let taken = self.list_folders()?.into_iter().any(|f| {
+            Some(f.id.as_str()) != existing_id
+                && f.parent_id.as_deref() == parent_id
+                && f.name.to_lowercase() == lower
+        });
         if taken {
             return Err(Error::invalid(format!(
-                "A folder named \"{name}\" already exists."
+                "A folder named \"{name}\" already exists here."
             )));
         }
         Ok(name.to_string())
@@ -539,6 +672,7 @@ fn folder_from_row(row: &Row<'_>) -> rusqlite::Result<Folder> {
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
         note_count: row.get(6)?,
+        parent_id: row.get(7)?,
     })
 }
 

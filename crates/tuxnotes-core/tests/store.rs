@@ -503,3 +503,153 @@ fn blank_notes_are_discarded_but_notes_with_content_are_kept() {
     assert_eq!(s.discard_blank_notes().unwrap(), 2);
     assert_eq!(s.list_notes(&NoteFilter::All).unwrap().len(), 2);
 }
+
+// ---------------------------------------------------------------- subfolders
+
+fn names_in(s: &Store, parent: Option<&str>) -> Vec<String> {
+    s.list_folders()
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.parent_id.as_deref() == parent)
+        .map(|f| f.name)
+        .collect()
+}
+
+#[test]
+fn subfolders_live_inside_their_parent() {
+    let s = store();
+    let work = s.create_folder("Work").unwrap();
+    let projects = s.create_subfolder("Projects", Some(&work.id)).unwrap();
+    assert_eq!(projects.parent_id.as_deref(), Some(work.id.as_str()));
+    assert_eq!(names_in(&s, Some(&work.id)), ["Projects"]);
+    assert_eq!(names_in(&s, None), [DEFAULT_FOLDER_NAME, "Work"]);
+    assert!(matches!(
+        s.create_subfolder("X", Some("nope")),
+        Err(Error::NotFound { .. })
+    ));
+    // Notes can live in subfolders.
+    let n = s.create_note(Some(&projects.id)).unwrap();
+    assert_eq!(n.folder_id, projects.id);
+}
+
+#[test]
+fn folder_names_only_need_to_be_unique_among_siblings() {
+    let s = store();
+    let work = s.create_folder("Work").unwrap();
+    let home = s.create_folder("Home").unwrap();
+    s.create_subfolder("Ideas", Some(&work.id)).unwrap();
+    s.create_subfolder("Ideas", Some(&home.id)).unwrap();
+    s.create_folder("Ideas").unwrap();
+    assert!(matches!(
+        s.create_subfolder("ideas", Some(&work.id)),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn folders_can_be_reordered_and_nested_by_moving() {
+    let mut s = store();
+    let a = s.create_folder("A").unwrap();
+    let b = s.create_folder("B").unwrap();
+    let c = s.create_folder("C").unwrap();
+    s.move_folder(&c.id, None, 0).unwrap();
+    assert_eq!(
+        names_in(&s, None),
+        [DEFAULT_FOLDER_NAME, "C", "A", "B"],
+        "default folder stays first"
+    );
+    s.move_folder(&c.id, None, 99).unwrap();
+    assert_eq!(names_in(&s, None), [DEFAULT_FOLDER_NAME, "A", "B", "C"]);
+
+    // Nest B inside A, then C inside A before B.
+    s.move_folder(&b.id, Some(&a.id), 0).unwrap();
+    s.move_folder(&c.id, Some(&a.id), 0).unwrap();
+    assert_eq!(names_in(&s, Some(&a.id)), ["C", "B"]);
+    assert_eq!(names_in(&s, None), [DEFAULT_FOLDER_NAME, "A"]);
+    // And back out to the top level (positions count the movable folders only).
+    s.move_folder(&b.id, None, 1).unwrap();
+    assert_eq!(names_in(&s, None), [DEFAULT_FOLDER_NAME, "A", "B"]);
+    s.move_folder(&b.id, None, 0).unwrap();
+    assert_eq!(names_in(&s, None), [DEFAULT_FOLDER_NAME, "B", "A"]);
+}
+
+#[test]
+fn folders_cant_move_into_themselves_and_the_default_stays_put() {
+    let mut s = store();
+    let a = s.create_folder("A").unwrap();
+    let b = s.create_subfolder("B", Some(&a.id)).unwrap();
+    let c = s.create_subfolder("C", Some(&b.id)).unwrap();
+    assert!(matches!(
+        s.move_folder(&a.id, Some(&a.id), 0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert!(matches!(
+        s.move_folder(&a.id, Some(&c.id), 0),
+        Err(Error::InvalidInput(_))
+    ));
+    let default_id = s.default_folder_id().unwrap();
+    assert!(matches!(
+        s.move_folder(&default_id, Some(&a.id), 0),
+        Err(Error::InvalidInput(_))
+    ));
+    // Moving next to a same-named sibling is refused.
+    let other = s.create_folder("C").unwrap();
+    assert!(matches!(
+        s.move_folder(&other.id, Some(&b.id), 0),
+        Err(Error::InvalidInput(_))
+    ));
+    assert_eq!(
+        s.descendant_ids(&a.id).unwrap(),
+        [b.id.clone(), c.id.clone()]
+    );
+}
+
+#[test]
+fn nesting_is_limited_to_five_levels() {
+    let mut s = store();
+    let mut parent = s.create_folder("L1").unwrap();
+    for level in 2..=5 {
+        parent = s
+            .create_subfolder(&format!("L{level}"), Some(&parent.id))
+            .unwrap();
+    }
+    assert!(matches!(
+        s.create_subfolder("L6", Some(&parent.id)),
+        Err(Error::InvalidInput(_))
+    ));
+    // A two-level subtree can't be moved under level 4 either (4 + 2 > 5).
+    let top = s.create_folder("Top").unwrap();
+    s.create_subfolder("Child", Some(&top.id)).unwrap();
+    let l4 = s.get_folder(&parent.parent_id.clone().unwrap()).unwrap();
+    assert!(matches!(
+        s.move_folder(&top.id, Some(&l4.id), 0),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn deleting_a_folder_deletes_its_subfolders_and_keeps_their_notes_in_trash() {
+    let mut s = store();
+    let work = s.create_folder("Work").unwrap();
+    let projects = s.create_subfolder("Projects", Some(&work.id)).unwrap();
+    let old = s.create_subfolder("Old", Some(&projects.id)).unwrap();
+    for f in [&work, &projects, &old] {
+        let n = s.create_note(Some(&f.id)).unwrap();
+        s.update_note_content(&n.id, &doc(&[&format!("note in {}", f.name)]))
+            .unwrap();
+    }
+    assert_eq!(s.delete_folder(&work.id).unwrap(), 3);
+    assert_eq!(
+        s.list_folders().unwrap().len(),
+        1,
+        "only the default folder is left"
+    );
+    assert_eq!(s.trash_count().unwrap(), 3);
+    for n in s.list_notes(&NoteFilter::Trash).unwrap() {
+        assert_eq!(
+            n.folder_id,
+            s.default_folder_id().unwrap(),
+            "restorable into the default folder"
+        );
+    }
+}
