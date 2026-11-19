@@ -5258,6 +5258,7 @@ name = "tuxnotes"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "gtk",
  "keyring",
  "log",
  "reqwest",
@@ -5272,6 +5273,7 @@ dependencies = [
  "tokio",
  "tuxnotes-core",
  "tuxnotes-gdrive",
+ "webkit2gtk",
 ]
 
 [[package]]

@@ -98,6 +98,7 @@
         ["Search all notes", "Ctrl+Shift+F"],
         ["Delete note", "Ctrl+Delete"],
         ["Settings", "Ctrl+,"],
+        ["Print the open note", "Ctrl+P"],
       ],
     },
     {

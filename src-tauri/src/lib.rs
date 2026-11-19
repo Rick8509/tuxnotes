@@ -2,6 +2,7 @@ mod attachments;
 mod backup_service;
 mod commands;
 mod credentials;
+mod export;
 mod google_client;
 mod settings;
 
@@ -86,6 +87,7 @@ pub fn run() {
                 backup,
                 attachments_dir,
             });
+            app.manage(export::ImportSession::default());
             spawn_auto_backup(app.handle().clone());
             Ok(())
         })
@@ -120,6 +122,11 @@ pub fn run() {
             attachments::attach_files,
             attachments::open_attachment,
             attachments::save_attachment_as,
+            export::export_markdown,
+            export::pick_markdown_files,
+            export::import_image,
+            export::print_note,
+            export::export_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TuxNotes");

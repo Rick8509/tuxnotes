@@ -13,6 +13,7 @@ import type {
   BackupStatus,
   DocJSON,
   Folder,
+  MarkdownFile,
   Note,
   NoteFilter,
   NoteSummary,
@@ -93,6 +94,19 @@ export const api = {
     isTauri ? call<AttachResult>("attach_files", { noteId }) : import("./mock").then((m) => m.mockAttachFiles(noteId)),
   openAttachment: (id: string) =>
     isTauri ? call<void>("open_attachment", { id }) : import("./mock").then((m) => m.mockOpenAttachment(id)),
+  /** Save Markdown (attachments are copied next to it). Returns the path, or null if cancelled. */
+  exportMarkdown: (title: string, markdown: string) =>
+    isTauri
+      ? call<string | null>("export_markdown", { title, markdown })
+      : import("./mock").then((m) => m.mockExportMarkdown(title, markdown)),
+  exportPdf: (title: string) => (isTauri ? call<string | null>("export_pdf", { title }) : import("./mock").then((m) => m.mockPrint())),
+  printNote: () => (isTauri ? call<void>("print_note") : import("./mock").then((m) => m.mockPrint())),
+  pickMarkdownFiles: () =>
+    isTauri ? call<MarkdownFile[]>("pick_markdown_files") : import("./mock").then((m) => m.mockPickMarkdownFiles()),
+  importImage: (noteId: string, markdownPath: string, src: string) =>
+    isTauri
+      ? call<Attachment>("import_image", { noteId, markdownPath, src })
+      : Promise.reject(new Error("Images can't be imported in the browser preview.")),
   saveAttachmentAs: (id: string) =>
     isTauri ? call<boolean>("save_attachment_as", { id }) : import("./mock").then((m) => m.mockSaveAttachment(id)),
 };

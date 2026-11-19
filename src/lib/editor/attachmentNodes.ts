@@ -39,7 +39,18 @@ export const ImageNode = Node.create({
   renderHTML({ HTMLAttributes }) {
     return ["img", mergeAttributes({ class: "note-image", draggable: "true" }, HTMLAttributes)];
   },
+
+  // Markdown: exported as ![alt](attachment:<id>) (the exporter rewrites that to a file path).
+  // Imported images keep their source in `src` until the importer turns them into attachments.
+  markdownTokenName: "image",
+  parseMarkdown: (token) => ({ type: "image", attrs: { src: token.href ?? "", alt: token.text || null } }),
+  renderMarkdown: (node) => `![${escapeMd((node.attrs?.alt as string) ?? "")}](attachment:${node.attrs?.attachmentId})`,
 });
+
+/** Escape characters that would end Markdown link text early. */
+function escapeMd(s: string): string {
+  return s.replace(/([\\[\]])/g, "\\$1");
+}
 
 /** Short label for the file icon, e.g. "PDF". */
 export function fileBadge(filename: string): string {
@@ -72,6 +83,9 @@ export const FileNode = Node.create({
   parseHTML() {
     return [{ tag: "div[data-attachment-id][data-filename]" }];
   },
+
+  // Markdown: a link to the file (the exporter rewrites attachment:<id> to a file path).
+  renderMarkdown: (node) => `[📎 ${escapeMd((node.attrs?.filename as string) ?? "file")}](attachment:${node.attrs?.attachmentId})`,
 
   renderHTML({ node, HTMLAttributes }) {
     const { filename, size } = node.attrs as { filename: string; size: number };

@@ -106,3 +106,11 @@ export interface AttachResult {
 
 /** Image types shown inline (same list as the Rust side). */
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"];
+
+/** A Markdown file picked for import. */
+export interface MarkdownFile {
+  path: string;
+  /** File name without extension. */
+  name: string;
+  text: string;
+}

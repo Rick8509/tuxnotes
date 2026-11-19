@@ -162,3 +162,108 @@ input {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ------------------------------------------------------------------ print
+   Print and "Export as PDF" show just the open note, always in light colours. */
+@page {
+  margin: 18mm 16mm;
+}
+@media print {
+  :root,
+  :root[data-theme="dark"] {
+    --font-ui: "Inter", system-ui, -apple-system, "Cantarell", "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+    --accent: #e0a500;
+    --accent-strong: #c48f00;
+    --accent-contrast: #1d1d1f;
+    --text: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #a1a1a6;
+    --bg-sidebar: #f0f0f2;
+    --bg-list: #ffffff;
+    --bg-editor: #ffffff;
+    --bg-hover: rgba(0, 0, 0, 0.05);
+    --bg-active: rgba(0, 0, 0, 0.09);
+    --bg-input: rgba(0, 0, 0, 0.06);
+    --sel-sidebar: rgba(0, 0, 0, 0.1);
+    --sel-list: #fde58a;
+    --sel-list-text: #1d1d1f;
+    --separator: #e3e3e6;
+    --separator-strong: #d2d2d7;
+    --danger: #d70015;
+    --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+    --window-radius: 12px;
+    --window-border: rgba(0, 0, 0, 0.22);
+    --sel-list-inactive: #e6e6e9;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --header-h: 52px;
+    color-scheme: light;
+  }
+  html,
+  body,
+  #app,
+  .frame,
+  .app,
+  .editor-pane,
+  .editor-pane .scroll {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  body,
+  .frame,
+  .editor-pane {
+    background: #fff !important;
+  }
+  .frame {
+    contain: none !important;
+    border-radius: 0 !important;
+  }
+  .app {
+    display: block !important;
+  }
+  .frame::after {
+    display: none !important;
+  }
+  .sidebar,
+  .list-pane,
+  .editor-pane > .header,
+  .find-bar,
+  .trash-banner,
+  .toast,
+  .overlay-scrim,
+  .link-bubble,
+  .link-form,
+  .menu,
+  .backdrop,
+  .resizer,
+  .empty,
+  .scrim {
+    display: none !important;
+  }
+  .editor-pane .scroll {
+    padding: 0 !important;
+  }
+  .editor-pane .date {
+    text-align: left !important;
+    padding-top: 0 !important;
+  }
+  .search-match {
+    background: none !important;
+    color: inherit !important;
+  }
+  .ProseMirror-selectednode {
+    outline: none !important;
+  }
+  .prose img.note-image {
+    max-height: none !important;
+  }
+  .prose img.note-image,
+  .prose table,
+  .prose .note-file,
+  .prose pre {
+    break-inside: avoid;
+  }
+}

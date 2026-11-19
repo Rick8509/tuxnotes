@@ -83,7 +83,7 @@ fn serve<R: tauri::Runtime>(app: &AppHandle<R>, id: &str) -> Response<Vec<u8>> {
 // ------------------------------------------------------------------- commands
 
 /// Decode a percent-encoded header value (file names may contain any characters).
-fn percent_decode(value: &str) -> String {
+pub(crate) fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

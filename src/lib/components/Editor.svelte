@@ -1,20 +1,19 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { Editor, Extension, getMarkRange } from "@tiptap/core";
-  import StarterKit from "@tiptap/starter-kit";
-  import { TaskItem, TaskList } from "@tiptap/extension-list";
   import { Placeholder } from "@tiptap/extensions";
-  import { TableKit } from "@tiptap/extension-table";
   import { EditorState, NodeSelection } from "@tiptap/pm/state";
   import type { EditorView } from "@tiptap/pm/view";
-  import { ChevronDown, ChevronUp, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, Ellipsis, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { api, isTauri } from "../api";
   import { NOTE_DRAG_TYPE } from "../dnd";
-  import { FileNode, ImageNode, nodeForAttachment } from "../editor/attachmentNodes";
+  import { nodeForAttachment } from "../editor/attachmentNodes";
+  import { contentExtensions } from "../editor/content";
   import { ChecklistSort, checklistActions } from "../editor/checklist";
   import { SearchHighlight, getSearch, goToMatch, scrollToPos, setSearch } from "../editor/search";
   import { formatEditorDate } from "../format";
+  import { exportMarkdown, exportPdf, importMarkdown, printNote } from "../importExport";
   import { displayUrl, isOpenableUrl } from "../links";
   import { tableMenuItems } from "../tableMenu";
   import { extractText } from "../text";
@@ -377,6 +376,23 @@
     return true;
   }
 
+  /** "⋯" button: export, print and import. */
+  function openMoreMenu(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const hasNote = !!app.current;
+    tableMenu = {
+      x: r.right - 230,
+      y: r.bottom + 4,
+      items: [
+        { label: "Export as Markdown…", action: exportMarkdown, disabled: !hasNote },
+        { label: "Export as PDF…", action: exportPdf, disabled: !hasNote },
+        { label: "Print…", action: printNote, disabled: !hasNote },
+        { kind: "separator" },
+        { label: "Import Markdown Files…", action: importMarkdown },
+      ],
+    };
+  }
+
   /** Clicking the empty space below the text puts the cursor at the end, like Apple Notes. */
   function onScrollerClick(e: MouseEvent) {
     if (e.target === scroller && editor?.isEditable) editor.commands.focus("end");
@@ -386,20 +402,11 @@
     const ed = new Editor({
       element,
       extensions: [
-        StarterKit.configure({
-          heading: { levels: [1, 2, 3] },
-          link: { openOnClick: false, autolink: true, defaultProtocol: "https" },
-        }),
-        TaskList,
-        TaskItem.configure({ nested: true }),
+        ...contentExtensions(),
         // Settings → General → "Move checked items to the bottom".
         ChecklistSort.configure({ enabled: () => prefs.sortChecked }),
         SearchHighlight,
         Placeholder.configure({ placeholder: "Start writing…" }),
-        // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
-        TableKit.configure({ table: { resizable: true, cellMinWidth: 60 } }),
-        ImageNode,
-        FileNode,
         Shortcuts,
         TabKey,
       ],
@@ -509,6 +516,9 @@
     <span class="divider"></span>
     <EditorToolbar {editor} {version} disabled={readOnly} onattach={attachFromPicker} onlink={openLinkEditor} />
     <div class="spacer" data-tauri-drag-region></div>
+    <button class="icon-btn" title="Export, print or import" aria-label="More actions" onclick={openMoreMenu}>
+      <Ellipsis size={17} />
+    </button>
     {#if note && !note.deletedAt}
       <button
         class="icon-btn"

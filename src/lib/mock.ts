@@ -4,7 +4,7 @@
 
 import { extractText, isBlank } from "./text";
 import { registerPreviewUrl } from "./attachmentUrls";
-import type { AttachResult, Attachment, BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import type { AttachResult, Attachment, MarkdownFile, BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
 import { IMAGE_MIMES } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
@@ -366,4 +366,42 @@ export async function mockSaveAttachment(id: string): Promise<boolean> {
   a.download = entry.attachment.filename;
   a.click();
   return true;
+}
+
+// ------------------------------------------------------------ export / import
+
+function download(name: string, blob: Blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+}
+
+export async function mockExportMarkdown(title: string, markdown: string): Promise<string> {
+  const name = `${(title || "Note").replace(/[\\/:*?"<>|]/g, "-")}.md`;
+  download(name, new Blob([markdown], { type: "text/markdown" }));
+  return name;
+}
+
+export async function mockPrint(): Promise<null> {
+  window.print();
+  return null;
+}
+
+export function mockPickMarkdownFiles(): Promise<MarkdownFile[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".md,.markdown,.txt";
+    input.style.display = "none";
+    input.onchange = async () => {
+      const out: MarkdownFile[] = [];
+      for (const f of input.files ?? []) out.push({ path: f.name, name: f.name.replace(/\.[^.]+$/, ""), text: await f.text() });
+      input.remove();
+      resolve(out);
+    };
+    document.body.appendChild(input);
+    input.click();
+  });
 }

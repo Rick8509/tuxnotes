@@ -185,6 +185,15 @@ class AppState {
     await this.selectNote(this.notes[0]?.id ?? null);
   }
 
+  /** Reload the note list (e.g. after importing) and open `selectId`. */
+  async reloadNotes(selectId: string | null) {
+    await this.flush();
+    this.clearSearch();
+    await this.loadNotes();
+    await this.refreshCounts();
+    await this.selectNote(selectId ?? this.notes[0]?.id ?? null);
+  }
+
   /** Reload everything from the backend, e.g. after restoring a backup. */
   async reloadAll() {
     this.pending = null;

@@ -10,6 +10,7 @@
 - Rich text: title, heading and subheading styles, bold, italic, underline, strikethrough, monospaced blocks, quotes
 - Checklists with round checkboxes (ticked items move to the bottom; right-click for Check All, Uncheck All, Delete Checked Items), plus bulleted and numbered lists
 - **Tables**: insert from the toolbar, right-click a cell to add or remove rows and columns, Tab between cells, drag borders to resize columns
+- **Export and import**: save a note as Markdown (attachments are copied next to it) or as a PDF, print it, and import Markdown files as notes (checklists, tables and images included). All from the **⋯** button in the editor
 - **Images and attachments**: paste a screenshot, drag in files, or use the paperclip button. Images show in the note; other files appear as chips you can open (double-click) or save a copy of. Attachments are included in backups
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
 - Fast full-text search that ignores accents ("cafe" finds "café"); matches are highlighted in the open note, and **Find in note** (`Ctrl+F`) steps through matches
@@ -26,6 +27,7 @@
 |---|---|
 | New note | `Ctrl+N` |
 | Settings | `Ctrl+,` |
+| Print the open note | `Ctrl+P` |
 | New folder | `Ctrl+Shift+N` |
 | Find in the open note | `Ctrl+F` (while typing in a note) |
 | Search all notes | `Ctrl+Shift+F` (or `Ctrl+F` elsewhere) |
@@ -135,7 +137,7 @@ Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-taur
 
 - [x] v0.1: folders, notes, rich text, checklists, search, pinning, Recently Deleted
 - [x] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
-- [ ] v0.3: tables ✅, images and attachments ✅, Markdown and PDF export, encrypted backups
+- [ ] v0.3: tables ✅, images and attachments ✅, Markdown and PDF export ✅, encrypted backups
 - [ ] Flathub release
 
 ## License

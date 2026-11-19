@@ -4,6 +4,7 @@
   import { isTauri } from "./lib/api";
   import { app } from "./lib/stores/app.svelte";
   import { ui } from "./lib/stores/ui.svelte";
+  import { printNote } from "./lib/importExport";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import NoteList from "./lib/components/NoteList.svelte";
@@ -81,7 +82,10 @@
       return;
     }
 
-    if (e.key === ",") {
+    if (key === "p" && !e.shiftKey) {
+      e.preventDefault();
+      if (app.current) void printNote();
+    } else if (e.key === ",") {
       e.preventDefault();
       app.settingsSection = "general";
     } else if (key === "n" && !e.shiftKey) {
