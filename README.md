@@ -38,6 +38,7 @@
 | Zoom in / out | `Ctrl+=` / `Ctrl+-` |
 | Open the selected note for typing (in the note list) | `Enter` or `Tab` |
 | Delete the selected note (in the note list) | `Delete` |
+| Add or edit a link | `Ctrl+K` |
 | Open a link in your browser | `Ctrl+click` |
 | Next / previous table cell (Tab in the last cell adds a row) | `Tab` / `Shift+Tab` |
 

@@ -22,8 +22,10 @@
     disabled: boolean;
     /** Paperclip button: attach files from the file picker. */
     onattach: () => void;
+    /** Add or edit a link (same as Ctrl+K). */
+    onlink: () => void;
   }
-  let { editor, version, disabled, onattach }: Props = $props();
+  let { editor, version, disabled, onattach, onlink }: Props = $props();
 
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
 
@@ -78,6 +80,8 @@
         { label: mark(editor.isActive("italic"), "Italic"), action: () => chain().toggleItalic().run() },
         { label: mark(editor.isActive("underline"), "Underline"), action: () => chain().toggleUnderline().run() },
         { label: mark(editor.isActive("strike"), "Strikethrough"), action: () => chain().toggleStrike().run() },
+        { kind: "separator" },
+        { label: editor.isActive("link") ? "     Edit Link…   Ctrl+K" : "     Link…   Ctrl+K", action: onlink },
       ],
     };
   }

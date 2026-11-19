@@ -107,6 +107,7 @@
         ["Checklist", "Ctrl+Shift+L"],
         ["Title / Heading / Subheading", "Ctrl+Shift+T / H / J"],
         ["Body text", "Ctrl+Shift+B"],
+        ["Add or edit a link", "Ctrl+K"],
         ["Open link in browser", "Ctrl+Click"],
       ],
     },

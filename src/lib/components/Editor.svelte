@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Editor, Extension } from "@tiptap/core";
+  import { Editor, Extension, getMarkRange } from "@tiptap/core";
   import StarterKit from "@tiptap/starter-kit";
   import { TaskItem, TaskList } from "@tiptap/extension-list";
   import { Placeholder } from "@tiptap/extensions";
@@ -13,6 +13,7 @@
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { FileNode, ImageNode, nodeForAttachment } from "../editor/attachmentNodes";
   import { formatEditorDate } from "../format";
+  import { displayUrl, isOpenableUrl } from "../links";
   import { tableMenuItems } from "../tableMenu";
   import { extractText } from "../text";
   import { app } from "../stores/app.svelte";
@@ -21,6 +22,7 @@
   import type { DocJSON } from "../types";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
+  import LinkForm from "./LinkForm.svelte";
   import WindowControls from "./WindowControls.svelte";
 
   let element: HTMLDivElement;
@@ -48,6 +50,10 @@
         "Mod-Shift-h": () => this.editor.commands.toggleHeading({ level: 2 }),
         "Mod-Shift-j": () => this.editor.commands.toggleHeading({ level: 3 }),
         "Mod-Shift-b": () => this.editor.commands.setParagraph(),
+        "Mod-k": () => {
+          openLinkEditor();
+          return true;
+        },
       };
     },
   });
@@ -62,15 +68,85 @@
     },
   });
 
+  // ------------------------------------------------------------------ links
+
+  /** Bubble under a link while the cursor is in it: address, Open, Edit, Remove. */
+  let linkBubble = $state<{ href: string; x: number; y: number } | null>(null);
+  /** The add/edit link box (Ctrl+K). */
+  let linkForm = $state<{ x: number; y: number; href: string; withText: boolean; editing: boolean } | null>(null);
+
+  /** Position just under document position `pos`, relative to the scrolling area. */
+  function positionAt(ed: Editor, pos: number, width: number) {
+    const c = ed.view.coordsAtPos(pos);
+    const r = scroller.getBoundingClientRect();
+    return {
+      x: Math.max(8, Math.min(c.left - r.left, scroller.clientWidth - width - 8)),
+      y: c.bottom - r.top + scroller.scrollTop + 6,
+    };
+  }
+
+  function updateLinkBubble(ed: Editor) {
+    const { selection } = ed.state;
+    if (linkForm || !selection.empty || !ed.isActive("link")) {
+      linkBubble = null;
+      return;
+    }
+    const range = getMarkRange(selection.$from, ed.schema.marks.link);
+    const href = ed.getAttributes("link").href as string | undefined;
+    linkBubble = range && href ? { href, ...positionAt(ed, range.from, 320) } : null;
+  }
+
+  function openUrlSafely(href: string) {
+    if (!isOpenableUrl(href)) return;
+    if (isTauri) openUrl(href).catch((e) => app.showError(`Couldn't open the link: ${e}`));
+    else window.open(href, "_blank", "noopener");
+  }
+
+  /** Ctrl+K: add a link to the selection, edit the link under the cursor, or insert a new one. */
+  function openLinkEditor() {
+    const ed = editor;
+    if (!ed || !ed.isEditable) return;
+    const inLink = ed.isActive("link");
+    if (inLink) ed.commands.extendMarkRange("link");
+    const { from, empty } = ed.state.selection;
+    linkBubble = null;
+    linkForm = {
+      ...positionAt(ed, from, 340),
+      href: inLink ? ((ed.getAttributes("link").href as string) ?? "") : "",
+      withText: empty && !inLink,
+      editing: inLink,
+    };
+  }
+
+  function saveLink(href: string, text: string) {
+    const ed = editor;
+    const form = linkForm;
+    linkForm = null;
+    if (!ed || !form) return;
+    if (form.withText) {
+      const label = text || href.replace(/^mailto:/i, "");
+      ed.chain().focus().insertContent({ type: "text", text: label, marks: [{ type: "link", attrs: { href } }] }).run();
+    } else {
+      ed.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    }
+  }
+
+  function removeLink() {
+    linkForm = null;
+    editor?.chain().focus().extendMarkRange("link").unsetLink().run();
+  }
+
+  function cancelLink() {
+    linkForm = null;
+    editor?.commands.focus();
+  }
+
   /** Ctrl+click (or middle-click) a link to open it in the web browser. */
   function openLink(event: MouseEvent): boolean {
     const link = (event.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
     if (!link || !(event.ctrlKey || event.metaKey || event.button === 1)) return false;
     event.preventDefault();
-    const href = link.href;
-    if (!/^(https?|mailto):/i.test(href)) return true;
-    if (isTauri) openUrl(href).catch((e) => app.showError(`Couldn't open the link: ${e}`));
-    else window.open(href, "_blank", "noopener");
+    openUrlSafely(link.href);
     return true;
   }
 
@@ -246,7 +322,10 @@
         handlePaste: (_view, event) => handlePaste(event),
         handleDrop: (view, event, _slice, moved) => handleDrop(view, event, moved),
       },
-      onTransaction: () => version++,
+      onTransaction: ({ editor: e }) => {
+        version++;
+        updateLinkBubble(e);
+      },
       onUpdate: ({ editor: e }) => {
         const id = loadedId;
         if (id) app.markDirty(id, () => e.getJSON() as DocJSON);
@@ -279,6 +358,8 @@
       let doc;
       unsupported = false;
       tableMenu = null;
+      linkForm = null;
+      linkBubble = null;
       try {
         doc = ed.schema.nodeFromJSON(json);
         doc.check();
@@ -321,7 +402,7 @@
       </button>
     {/if}
     <span class="divider"></span>
-    <EditorToolbar {editor} {version} disabled={readOnly} onattach={attachFromPicker} />
+    <EditorToolbar {editor} {version} disabled={readOnly} onattach={attachFromPicker} onlink={openLinkEditor} />
     <div class="spacer" data-tauri-drag-region></div>
     {#if note && !note.deletedAt}
       <button
@@ -369,6 +450,22 @@
     <div class="date">{note ? formatEditorDate(note.updatedAt) : ""}</div>
     <!-- TipTap owns everything inside this element. -->
     <div bind:this={element}></div>
+
+    {#if linkBubble && !linkForm}
+      <!-- mousedown is prevented so the editor keeps its cursor while a button is clicked -->
+      <div class="link-bubble" role="toolbar" aria-label="Link" tabindex="-1" style:left="{linkBubble.x}px" style:top="{linkBubble.y}px" onmousedown={(e) => e.preventDefault()}>
+        <button class="url" title={linkBubble.href} onclick={() => openUrlSafely(linkBubble!.href)}>{displayUrl(linkBubble.href)}</button>
+        <span class="sep"></span>
+        <button onclick={() => openUrlSafely(linkBubble!.href)}>Open</button>
+        {#if editor?.isEditable}
+          <button onclick={openLinkEditor}>Edit</button>
+          <button onclick={removeLink}>Remove</button>
+        {/if}
+      </div>
+    {/if}
+    {#if linkForm}
+      <LinkForm {...linkForm} onsave={saveLink} onremove={removeLink} oncancel={cancelLink} />
+    {/if}
   </div>
 
   {#if !note}
@@ -440,6 +537,7 @@
     font-weight: 600;
   }
   .scroll {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -584,6 +682,45 @@
     height: 0;
     pointer-events: none;
     color: var(--text-tertiary);
+  }
+
+  /* ----------------------------------------------------------------- links */
+  .link-bubble {
+    position: absolute;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 320px;
+    padding: 4px;
+    border-radius: var(--radius-md);
+    background: var(--bg-list);
+    box-shadow: var(--shadow-pop);
+    font-size: 12px;
+    user-select: none;
+    cursor: default;
+  }
+  .link-bubble button {
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .link-bubble button:hover {
+    background: var(--bg-hover);
+  }
+  .link-bubble .url {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--accent-strong);
+    font-weight: 500;
+  }
+  .link-bubble .sep {
+    width: 1px;
+    height: 16px;
+    margin: 0 2px;
+    background: var(--separator-strong);
   }
 
   /* ----------------------------------------------------------- attachments */

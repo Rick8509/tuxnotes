@@ -5,6 +5,7 @@ All notable changes to TuxNotes are listed here.
 ## Unreleased
 
 ### Added
+- **Link editing.** `Ctrl+K` (or **Link…** in the Aa menu) turns selected text into a link, edits the link under the cursor, or inserts a new link with its own text. Type `example.com` or `name@example.com` and TuxNotes adds the `https://` or `mailto:` part; anything that isn't a web, email or phone link is refused. With the cursor in a link, a small bubble shows the address with **Open**, **Edit** and **Remove**. `Ctrl+click` still opens links directly.
 - **Images and attachments.** Paste a screenshot, drag files in from your file manager, or use the paperclip button. Images show in the note; other files appear as a chip with type, name and size: double-click to open, right-click to open, save a copy or delete. Up to 50 MB per file. File names are searchable. Attachments are stored next to your notes and included in backups. Files no longer used by any note are cleaned up after a day, so undo keeps working.
 - **Tables.** Insert one from the toolbar; right-click a cell to add or delete rows and columns, merge or split cells, or turn the header row on or off. Tab and Shift+Tab move between cells, and Tab in the last cell adds a row. Drag a column border to resize it. Text inside tables is searchable and shows in the note preview.
 - **Settings window** (`Ctrl+,`): sort and grouping options, how new notes start, System/Light/Dark theme, text size, backup, keyboard shortcuts, and an About page.
