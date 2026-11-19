@@ -12,6 +12,7 @@
   import { api, isTauri } from "../api";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { FileNode, ImageNode, nodeForAttachment } from "../editor/attachmentNodes";
+  import { ChecklistSort, checklistActions } from "../editor/checklist";
   import { formatEditorDate } from "../format";
   import { displayUrl, isOpenableUrl } from "../links";
   import { tableMenuItems } from "../tableMenu";
@@ -260,6 +261,32 @@
       tableMenu = { x: event.clientX, y: event.clientY, items: ed.isEditable ? items : items.slice(0, 2) };
       return true;
     }
+    if (target.closest('ul[data-type="taskList"]') && ed.isEditable) {
+      const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+      if (!at) return false;
+      event.preventDefault();
+      // Inside a table cell, the table actions are still one click away.
+      const inTable = !!target.closest("td, th");
+      const { total, checked } = checklistActions.counts(ed, at.pos);
+      const items: MenuItem[] = [
+        { label: "Check All", action: () => checklistActions.setAll(ed, at.pos, true), disabled: checked === total },
+        { label: "Uncheck All", action: () => checklistActions.setAll(ed, at.pos, false), disabled: checked === 0 },
+        { label: "Move Checked to Bottom", action: () => checklistActions.moveCheckedToBottom(ed, at.pos), disabled: checked === 0 },
+        { kind: "separator" },
+        {
+          label: checked ? `Delete ${checked} Checked Item${checked === 1 ? "" : "s"}` : "Delete Checked Items",
+          action: () => checklistActions.deleteChecked(ed, at.pos),
+          disabled: checked === 0,
+          danger: true,
+        },
+      ];
+      if (inTable) {
+        ed.chain().setTextSelection(at.pos).run();
+        items.push({ kind: "separator" }, { kind: "heading", label: "Table" }, ...tableMenuItems(ed));
+      }
+      tableMenu = { x: event.clientX, y: event.clientY, items };
+      return true;
+    }
     return openTableMenu(view, event);
   }
 
@@ -293,6 +320,8 @@
         }),
         TaskList,
         TaskItem.configure({ nested: true }),
+        // Settings → General → "Move checked items to the bottom".
+        ChecklistSort.configure({ enabled: () => prefs.sortChecked }),
         Placeholder.configure({ placeholder: "Start writing…" }),
         // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
         TableKit.configure({ table: { resizable: true, cellMinWidth: 60 } }),

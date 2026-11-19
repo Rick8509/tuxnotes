@@ -17,6 +17,8 @@ interface Persisted {
   sortBy: SortBy;
   groupByDate: boolean;
   firstLine: FirstLine;
+  /** Ticked checklist items move to the bottom of their list. */
+  sortChecked: boolean;
 }
 
 const DEFAULTS: Persisted = {
@@ -25,6 +27,7 @@ const DEFAULTS: Persisted = {
   sortBy: "edited",
   groupByDate: true,
   firstLine: "title",
+  sortChecked: true,
 };
 
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
@@ -41,6 +44,7 @@ function load(): Persisted {
       sortBy: pick(p.sortBy, ["edited", "created", "title"], DEFAULTS.sortBy),
       groupByDate: typeof p.groupByDate === "boolean" ? p.groupByDate : DEFAULTS.groupByDate,
       firstLine: pick(p.firstLine, ["title", "heading", "body"], DEFAULTS.firstLine),
+      sortChecked: typeof p.sortChecked === "boolean" ? p.sortChecked : DEFAULTS.sortChecked,
     };
   } catch {
     return { ...DEFAULTS };
@@ -55,6 +59,7 @@ class Prefs {
   sortBy = $state<SortBy>(DEFAULTS.sortBy);
   groupByDate = $state(DEFAULTS.groupByDate);
   firstLine = $state<FirstLine>(DEFAULTS.firstLine);
+  sortChecked = $state(DEFAULTS.sortChecked);
   /** Follows the desktop's dark-mode setting live. */
   systemDark = $state(darkQuery?.matches ?? false);
 
@@ -86,6 +91,7 @@ class Prefs {
       sortBy: this.sortBy,
       groupByDate: this.groupByDate,
       firstLine: this.firstLine,
+      sortChecked: this.sortChecked,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(p));

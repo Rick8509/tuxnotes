@@ -112,6 +112,12 @@
       ],
     },
     {
+      group: "Checklists",
+      items: [
+        ["Check all, uncheck all, delete checked", "Right-click a checklist"],
+      ],
+    },
+    {
       group: "Tables",
       items: [
         ["Next / previous cell", "Tab / Shift+Tab"],
@@ -180,6 +186,18 @@
               checked={prefs.groupByDate}
               disabled={prefs.sortBy === "title"}
               onchange={(e) => prefs.set("groupByDate", e.currentTarget.checked)}
+            />
+          </label>
+          <label class="row">
+            <div class="label">
+              <span>Move checked items to the bottom</span>
+              <span class="hint">Ticked checklist items move below the unticked ones.</span>
+            </div>
+            <input
+              type="checkbox"
+              class="switch"
+              checked={prefs.sortChecked}
+              onchange={(e) => prefs.set("sortChecked", e.currentTarget.checked)}
             />
           </label>
           <div class="row">

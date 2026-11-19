@@ -8,7 +8,7 @@
 
 - Three panes: folders, note list and editor
 - Rich text: title, heading and subheading styles, bold, italic, underline, strikethrough, monospaced blocks, quotes
-- Checklists with round checkboxes, plus bulleted and numbered lists
+- Checklists with round checkboxes (ticked items move to the bottom; right-click for Check All, Uncheck All, Delete Checked Items), plus bulleted and numbered lists
 - **Tables**: insert from the toolbar, right-click a cell to add or remove rows and columns, Tab between cells, drag borders to resize columns
 - **Images and attachments**: paste a screenshot, drag in files, or use the paperclip button. Images show in the note; other files appear as chips you can open (double-click) or save a copy of. Attachments are included in backups
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
