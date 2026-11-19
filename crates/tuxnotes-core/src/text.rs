@@ -35,7 +35,7 @@ pub struct ExtractedText {
 
 pub fn extract(doc: &Value) -> ExtractedText {
     let mut raw = String::new();
-    walk(doc, &mut raw);
+    walk(doc, &mut raw, false);
 
     let mut lines = raw.lines().map(str::trim).filter(|line| !line.is_empty());
     let title = truncate_chars(lines.next().unwrap_or(""), MAX_TITLE_CHARS);
@@ -55,24 +55,31 @@ pub fn extract(doc: &Value) -> ExtractedText {
     }
 }
 
-fn walk(node: &Value, out: &mut String) {
+/// `in_cell`: inside a table cell, blocks are separated by spaces so each
+/// table row reads as one line ("Milestone Status", "M1 Done").
+fn walk(node: &Value, out: &mut String, in_cell: bool) {
     if let Some(text) = node.get("text").and_then(Value::as_str) {
         out.push_str(text);
     }
     let node_type = node.get("type").and_then(Value::as_str).unwrap_or("");
     if node_type == "hardBreak" {
-        out.push('\n');
+        out.push(if in_cell { ' ' } else { '\n' });
     }
+    let is_cell = INLINE_SEPARATED_NODES.contains(&node_type);
     if let Some(children) = node.get("content").and_then(Value::as_array) {
         for child in children {
-            walk(child, out);
+            walk(child, out, in_cell || is_cell);
         }
     }
-    if BLOCK_NODES.contains(&node_type) {
+    let ends_line = BLOCK_NODES.contains(&node_type) && !(in_cell && node_type != "tableRow");
+    if ends_line {
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
-    } else if INLINE_SEPARATED_NODES.contains(&node_type) && !out.ends_with([' ', '\n']) {
+    } else if (is_cell || BLOCK_NODES.contains(&node_type))
+        && !out.is_empty()
+        && !out.ends_with([' ', '\n'])
+    {
         out.push(' ');
     }
 }
@@ -169,15 +176,51 @@ mod tests {
     }
 
     #[test]
-    fn table_cells_are_space_separated() {
+    fn table_rows_read_as_lines() {
+        // The shape TipTap produces: table > tableRow > tableHeader/tableCell > paragraph.
+        let cell = |kind: &str, t: &str| {
+            json!({ "type": kind, "attrs": { "colspan": 1, "rowspan": 1, "colwidth": null },
+                    "content": [if t.is_empty() { json!({ "type": "paragraph" }) } else { para(t) }] })
+        };
+        let doc = json!({ "type": "doc", "content": [
+            para("Plan"),
+            { "type": "table", "content": [
+                { "type": "tableRow", "content": [cell("tableHeader", "Milestone"), cell("tableHeader", "Status")] },
+                { "type": "tableRow", "content": [cell("tableCell", "M1"), cell("tableCell", "Done")] },
+                { "type": "tableRow", "content": [cell("tableCell", ""), cell("tableCell", "Later")] },
+            ]},
+            para("After the table"),
+        ]});
+        let out = extract(&doc);
+        assert_eq!(
+            out.plain,
+            "Plan\nMilestone Status\nM1 Done\nLater\nAfter the table"
+        );
+        assert_eq!(out.title, "Plan");
+        assert_eq!(
+            out.snippet,
+            "Milestone Status M1 Done Later After the table"
+        );
+    }
+
+    #[test]
+    fn a_table_first_gives_its_header_row_as_title() {
         let cell = |t: &str| json!({ "type": "tableCell", "content": [para(t)] });
         let doc = json!({ "type": "doc", "content": [{ "type": "table", "content": [
-            { "type": "tableRow", "content": [cell("a"), cell("b")] },
+            { "type": "tableRow", "content": [cell("Name"), cell("Phone")] },
+            { "type": "tableRow", "content": [cell("Tux"), cell("123")] },
         ]}]});
-        // Paragraphs inside cells still end lines; what matters is no words are glued together.
-        let plain = extract(&doc).plain;
-        assert!(plain.contains('a') && plain.contains('b'));
-        assert!(!plain.contains("ab"));
+        let out = extract(&doc);
+        assert_eq!(out.title, "Name Phone");
+        assert_eq!(out.snippet, "Tux 123");
+    }
+
+    #[test]
+    fn an_empty_table_is_content() {
+        let doc = json!({ "type": "doc", "content": [{ "type": "table", "content": [
+            { "type": "tableRow", "content": [{ "type": "tableCell", "content": [{ "type": "paragraph" }] }] },
+        ]}]});
+        assert!(!is_blank(&doc));
     }
 
     #[test]

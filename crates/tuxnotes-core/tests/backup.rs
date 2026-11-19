@@ -235,3 +235,41 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .map(|b| format!("{b:02x}"))
         .collect()
 }
+
+#[test]
+fn notes_with_tables_save_search_and_survive_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let live = Store::open(dir.path().join("live.db")).unwrap();
+    let cell = |kind: &str, t: &str| {
+        json!({ "type": kind, "attrs": { "colspan": 1, "rowspan": 1, "colwidth": [120] },
+                "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": t }] }] })
+    };
+    let table_doc = json!({ "type": "doc", "content": [
+        { "type": "paragraph", "content": [{ "type": "text", "text": "Milestones" }] },
+        { "type": "table", "content": [
+            { "type": "tableRow", "content": [cell("tableHeader", "Name"), cell("tableHeader", "Status")] },
+            { "type": "tableRow", "content": [cell("tableCell", "Scaffold"), cell("tableCell", "Finished")] },
+        ]},
+    ]});
+    let note = live.create_note(None).unwrap();
+    let summary = live.update_note_content(&note.id, &table_doc).unwrap();
+    assert_eq!(summary.title, "Milestones");
+    assert_eq!(summary.snippet, "Name Status Scaffold Finished");
+    assert_eq!(
+        live.search("scaffold", 10).unwrap().len(),
+        1,
+        "text inside tables is searchable"
+    );
+
+    let archive = dir.path().join("b.zip");
+    create_backup(&live, &archive, "0.1.0").unwrap();
+    let restored_path = dir.path().join("restored.db");
+    extract_backup(&archive, &restored_path).unwrap();
+    let restored = Store::open(&restored_path).unwrap();
+    assert_eq!(
+        restored.get_note(&note.id).unwrap().content,
+        table_doc,
+        "table (incl. column widths) restored exactly"
+    );
+    assert_eq!(restored.search("finished", 10).unwrap().len(), 1);
+}

@@ -56,6 +56,36 @@ describe("extractText", () => {
   });
 });
 
+describe("tables", () => {
+  const cell = (type: string, text: string) => ({
+    type,
+    attrs: { colspan: 1, rowspan: 1, colwidth: null },
+    content: [text ? para(text) : { type: "paragraph" }],
+  });
+  it("reads each row as one line (same as Rust)", () => {
+    const out = extractText({
+      type: "doc",
+      content: [
+        para("Plan"),
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [cell("tableHeader", "Milestone"), cell("tableHeader", "Status")] },
+            { type: "tableRow", content: [cell("tableCell", "M1"), cell("tableCell", "Done")] },
+            { type: "tableRow", content: [cell("tableCell", ""), cell("tableCell", "Later")] },
+          ],
+        },
+        para("After the table"),
+      ],
+    });
+    expect(out.plain).toBe("Plan\nMilestone Status\nM1 Done\nLater\nAfter the table");
+    expect(out.snippet).toBe("Milestone Status M1 Done Later After the table");
+  });
+  it("an empty table is content", () => {
+    expect(isBlank({ type: "doc", content: [{ type: "table", content: [{ type: "tableRow", content: [cell("tableCell", "")] }] }] })).toBe(false);
+  });
+});
+
 describe("isBlank", () => {
   it("matches the Rust rules", () => {
     expect(isBlank({ type: "doc", content: [{ type: "paragraph" }, { type: "heading" }] })).toBe(true);

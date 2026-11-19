@@ -23,17 +23,20 @@ export interface ExtractedText {
   plain: string;
 }
 
-function walk(node: unknown, out: string[]): void {
+/** `inCell`: inside a table cell, blocks are separated by spaces so each table row reads as one line. */
+function walk(node: unknown, out: string[], inCell = false): void {
   if (!node || typeof node !== "object") return;
   const n = node as { type?: unknown; text?: unknown; content?: unknown };
   if (typeof n.text === "string") out.push(n.text);
   const type = typeof n.type === "string" ? n.type : "";
-  if (type === "hardBreak") out.push("\n");
-  if (Array.isArray(n.content)) for (const child of n.content) walk(child, out);
+  if (type === "hardBreak") out.push(inCell ? " " : "\n");
+  const isCell = INLINE_SEPARATED_NODES.has(type);
+  if (Array.isArray(n.content)) for (const child of n.content) walk(child, out, inCell || isCell);
   const last = out.length ? out[out.length - 1] : "";
-  if (BLOCK_NODES.has(type)) {
+  const endsLine = BLOCK_NODES.has(type) && !(inCell && type !== "tableRow");
+  if (endsLine) {
     if (out.length && !last.endsWith("\n")) out.push("\n");
-  } else if (INLINE_SEPARATED_NODES.has(type) && !/[ \n]$/.test(last)) {
+  } else if ((isCell || BLOCK_NODES.has(type)) && out.length && !/[ \n]$/.test(last)) {
     out.push(" ");
   }
 }

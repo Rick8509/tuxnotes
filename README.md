@@ -9,6 +9,7 @@
 - Three panes: folders, note list and editor
 - Rich text: title, heading and subheading styles, bold, italic, underline, strikethrough, monospaced blocks, quotes
 - Checklists with round checkboxes, plus bulleted and numbered lists
+- **Tables**: insert from the toolbar, right-click a cell to add or remove rows and columns, Tab between cells, drag borders to resize columns
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
 - Fast full-text search that ignores accents ("cafe" finds "café")
 - **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
@@ -37,6 +38,7 @@
 | Open the selected note for typing (in the note list) | `Enter` or `Tab` |
 | Delete the selected note (in the note list) | `Delete` |
 | Open a link in your browser | `Ctrl+click` |
+| Next / previous table cell (Tab in the last cell adds a row) | `Tab` / `Shift+Tab` |
 
 ## Where are my notes?
 
@@ -130,7 +132,7 @@ Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-taur
 
 - [x] v0.1: folders, notes, rich text, checklists, search, pinning, Recently Deleted
 - [x] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
-- [ ] v0.3: images and attachments, tables, Markdown and PDF export, encrypted backups
+- [ ] v0.3: tables ✅, images and attachments, Markdown and PDF export, encrypted backups
 - [ ] Flathub release
 
 ## License

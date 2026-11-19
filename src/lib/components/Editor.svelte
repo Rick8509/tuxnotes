@@ -4,21 +4,33 @@
   import StarterKit from "@tiptap/starter-kit";
   import { TaskItem, TaskList } from "@tiptap/extension-list";
   import { Placeholder } from "@tiptap/extensions";
+  import { TableKit } from "@tiptap/extension-table";
   import { EditorState } from "@tiptap/pm/state";
+  import type { EditorView } from "@tiptap/pm/view";
   import { Maximize2, Minimize2, Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { isTauri } from "../api";
   import { formatEditorDate } from "../format";
+  import { tableMenuItems } from "../tableMenu";
+  import { extractText } from "../text";
   import { app } from "../stores/app.svelte";
   import { prefs, TEXT_SIZE_PX } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
   import type { DocJSON } from "../types";
+  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
   import WindowControls from "./WindowControls.svelte";
 
   let element: HTMLDivElement;
   let scroller: HTMLDivElement;
   let editor = $state.raw<Editor | null>(null);
+  /** Right-click menu inside a table. */
+  let tableMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  /**
+   * The open note contains something this version can't display (e.g. made by a newer
+   * TuxNotes). It's shown as plain text and kept read-only so it can never be overwritten.
+   */
+  let unsupported = $state(false);
   let version = $state(0);
   /** Id of the note currently loaded into the editor. */
   let loadedId: string | null = null;
@@ -60,6 +72,21 @@
     return true;
   }
 
+  /** Right-click inside a table cell: table actions instead of the browser menu. */
+  function openTableMenu(view: EditorView, event: MouseEvent): boolean {
+    const ed = editor;
+    const cell = (event.target as HTMLElement).closest("td, th");
+    if (!ed || !cell || !ed.isEditable) return false;
+    event.preventDefault();
+    // Act on the right-clicked cell, unless it's part of a multi-cell selection (keep that for "Merge").
+    if (!cell.classList.contains("selectedCell")) {
+      const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
+      if (pos) ed.chain().focus().setTextSelection(pos.pos).run();
+    }
+    tableMenu = { x: event.clientX, y: event.clientY, items: tableMenuItems(ed) };
+    return true;
+  }
+
   /** Clicking the empty space below the text puts the cursor at the end, like Apple Notes. */
   function onScrollerClick(e: MouseEvent) {
     if (e.target === scroller && editor?.isEditable) editor.commands.focus("end");
@@ -76,15 +103,20 @@
         TaskList,
         TaskItem.configure({ nested: true }),
         Placeholder.configure({ placeholder: "Start writing…" }),
+        // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
+        TableKit.configure({ table: { resizable: true, cellMinWidth: 60 } }),
         Shortcuts,
         TabKey,
       ],
-      editable: false,
+      // Created editable so editable-only plugins (like table column resizing) are installed.
+      // Nothing can be typed until a note loads: the editor is hidden and loadNote sets this per note.
+      editable: true,
       editorProps: {
         attributes: { class: "prose", spellcheck: "true", "aria-label": "Note editor" },
         handleDOMEvents: {
           click: (_view, event) => openLink(event),
           auxclick: (_view, event) => openLink(event),
+          contextmenu: (view, event) => openTableMenu(view, event),
         },
       },
       onTransaction: () => version++,
@@ -118,17 +150,25 @@
       loadedId = id;
       const json = note ? $state.snapshot(note.content) : { type: "doc", content: [{ type: "paragraph" }] };
       let doc;
+      unsupported = false;
+      tableMenu = null;
       try {
         doc = ed.schema.nodeFromJSON(json);
+        doc.check();
       } catch (err) {
-        app.showError(`This note couldn't be fully loaded: ${err}`);
-        doc = ed.schema.nodeFromJSON({ type: "doc", content: [{ type: "paragraph" }] });
+        console.warn("note content not supported by this version:", err);
+        unsupported = true;
+        const lines = extractText(json).plain.split("\n");
+        doc = ed.schema.nodeFromJSON({
+          type: "doc",
+          content: lines.map((l) => (l ? { type: "paragraph", content: [{ type: "text", text: l }] } : { type: "paragraph" })),
+        });
       }
       ed.view.updateState(EditorState.create({ doc, plugins: ed.state.plugins }));
       scroller.scrollTop = 0;
       version++;
     }
-    const editable = !!note && !note.deletedAt;
+    const editable = !!note && !note.deletedAt && !unsupported;
     if (ed.isEditable !== editable) ed.setEditable(editable, false);
   }
 
@@ -138,7 +178,7 @@
   });
 
   const note = $derived(app.current);
-  const readOnly = $derived(!note || !!note.deletedAt);
+  const readOnly = $derived(!note || !!note.deletedAt || unsupported);
 </script>
 
 <main class="editor-pane">
@@ -185,6 +225,11 @@
       <button onclick={() => app.restoreNote(note.id)}><RotateCcw size={13} /> Restore</button>
     </div>
   {/if}
+  {#if note && unsupported}
+    <div class="trash-banner">
+      <span>This note uses something this version of TuxNotes can't show, so it's read-only here to keep it safe.</span>
+    </div>
+  {/if}
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
@@ -208,6 +253,10 @@
     </div>
   {/if}
 </main>
+
+{#if tableMenu}
+  <ContextMenu {...tableMenu} onclose={() => (tableMenu = null)} />
+{/if}
 
 <style>
   .editor-pane {
@@ -400,6 +449,66 @@
     height: 0;
     pointer-events: none;
     color: var(--text-tertiary);
+  }
+
+  /* ---------------------------------------------------------------- tables */
+  .scroll :global(.prose .tableWrapper) {
+    overflow-x: auto;
+    margin: 0.6em 0;
+  }
+  .scroll :global(.prose table) {
+    border-collapse: collapse;
+    table-layout: fixed;
+    width: 100%;
+    margin: 0.6em 0;
+    overflow: hidden;
+  }
+  .scroll :global(.prose .tableWrapper table) {
+    margin: 0;
+  }
+  .scroll :global(.prose td),
+  .scroll :global(.prose th) {
+    position: relative;
+    box-sizing: border-box;
+    min-width: 60px;
+    padding: 6px 10px;
+    border: 1px solid var(--separator-strong);
+    vertical-align: top;
+    text-align: left;
+  }
+  .scroll :global(.prose th) {
+    background: var(--bg-input);
+    font-weight: 600;
+  }
+  .scroll :global(.prose td > p),
+  .scroll :global(.prose th > p) {
+    margin: 0;
+  }
+  /* The first line of a note is styled as its title, but never inside a table. */
+  .scroll :global(.prose td p:first-child),
+  .scroll :global(.prose th p:first-child) {
+    font-size: inherit;
+  }
+  .scroll :global(.prose .selectedCell::after) {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    pointer-events: none;
+  }
+  .scroll :global(.prose .column-resize-handle) {
+    position: absolute;
+    top: 0;
+    right: -2px;
+    bottom: 0;
+    width: 4px;
+    z-index: 3;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .scroll :global(.prose.resize-cursor) {
+    cursor: col-resize;
   }
 
   /* Checklists: round yellow checkboxes like Apple Notes. */

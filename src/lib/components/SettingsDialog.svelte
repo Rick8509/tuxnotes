@@ -111,6 +111,14 @@
       ],
     },
     {
+      group: "Tables",
+      items: [
+        ["Next / previous cell", "Tab / Shift+Tab"],
+        ["New row (in the last cell)", "Tab"],
+        ["Row and column actions", "Right-click a cell"],
+      ],
+    },
+    {
       group: "Window",
       items: [
         ["Show or hide sidebar", "Ctrl+Alt+S"],

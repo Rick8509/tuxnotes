@@ -8,8 +8,10 @@
     ListChecks,
     ListOrdered,
     Strikethrough,
+    Table,
     Underline,
   } from "@lucide/svelte";
+  import { insertTable, isInTable, tableMenuItems } from "../tableMenu";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
 
   interface Props {
@@ -34,8 +36,20 @@
       taskList: is("taskList"),
       bulletList: is("bulletList"),
       orderedList: is("orderedList"),
+      table: isInTable(editor),
     };
   });
+
+  /** Outside a table: insert one. Inside: show the table actions. */
+  function tableButton(e: MouseEvent) {
+    if (!editor) return;
+    if (!isInTable(editor)) {
+      insertTable(editor);
+      return;
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu = { x: r.left, y: r.bottom + 4, items: tableMenuItems(editor) };
+  }
 
   const chain = () => editor!.chain().focus();
 
@@ -87,6 +101,17 @@
   </button>
   <button class="icon-btn" class:active={active.orderedList} title="Numbered list" aria-label="Numbered list" {disabled} onclick={() => chain().toggleOrderedList().run()}>
     <ListOrdered size={18} />
+  </button>
+  <span class="divider"></span>
+  <button
+    class="icon-btn"
+    class:active={active.table}
+    title={active.table ? "Table options" : "Insert table"}
+    aria-label={active.table ? "Table options" : "Insert table"}
+    {disabled}
+    onclick={tableButton}
+  >
+    <Table size={17} />
   </button>
 </div>
 
