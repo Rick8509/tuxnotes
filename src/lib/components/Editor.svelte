@@ -5,11 +5,13 @@
   import { TaskItem, TaskList } from "@tiptap/extension-list";
   import { Placeholder } from "@tiptap/extensions";
   import { TableKit } from "@tiptap/extension-table";
-  import { EditorState } from "@tiptap/pm/state";
+  import { EditorState, NodeSelection } from "@tiptap/pm/state";
   import type { EditorView } from "@tiptap/pm/view";
   import { Maximize2, Minimize2, Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { isTauri } from "../api";
+  import { api, isTauri } from "../api";
+  import { NOTE_DRAG_TYPE } from "../dnd";
+  import { FileNode, ImageNode, nodeForAttachment } from "../editor/attachmentNodes";
   import { formatEditorDate } from "../format";
   import { tableMenuItems } from "../tableMenu";
   import { extractText } from "../text";
@@ -72,6 +74,119 @@
     return true;
   }
 
+  // ------------------------------------------------------------ attachments
+
+  /** Upload files and insert them at `pos` (or at the cursor). */
+  async function addFiles(files: File[], pos?: number) {
+    const ed = editor;
+    const noteId = loadedId;
+    if (!ed || !noteId || !ed.isEditable || files.length === 0) return;
+    const big = files.some((f) => f.size > 2 * 1024 * 1024);
+    if (big) app.showInfo(files.length === 1 ? `Adding “${files[0].name}”…` : `Adding ${files.length} files…`);
+    const nodes = [];
+    for (const file of files) {
+      try {
+        nodes.push(nodeForAttachment(await api.addAttachment(noteId, file)));
+      } catch (e) {
+        app.showError(e);
+      }
+    }
+    // If the user switched notes meanwhile, don't insert into the wrong one.
+    if (nodes.length === 0 || loadedId !== noteId) return;
+    insertAttachments(ed, nodes, pos);
+    if (big) app.toast = null;
+  }
+
+  /**
+   * Insert attachment nodes, then put the cursor on the line after them (adding an empty
+   * line if needed), like Apple Notes. Otherwise the inserted item stays selected and the
+   * next paste or keystroke would replace it.
+   */
+  function insertAttachments(ed: Editor, nodes: ReturnType<typeof nodeForAttachment>[], pos?: number) {
+    const chain = ed.chain().focus();
+    (pos != null ? chain.insertContentAt(pos, nodes) : chain.insertContent(nodes)).run();
+    const sel = ed.state.selection;
+    if (!(sel instanceof NodeSelection) && sel.$from.parent.isTextblock) return;
+    const after = sel.to;
+    const next = ed.state.doc.resolve(after).nodeAfter;
+    if (next?.isTextblock) ed.commands.setTextSelection(after + 1);
+    else ed.chain().insertContentAt(after, { type: "paragraph" }).setTextSelection(after + 1).run();
+  }
+
+  /** Toolbar paperclip: pick files with the system file picker. */
+  async function attachFromPicker() {
+    const ed = editor;
+    const noteId = loadedId;
+    if (!ed || !noteId || !ed.isEditable) return;
+    try {
+      const { attachments, errors } = await api.attachFiles(noteId);
+      errors.forEach((e) => app.showError(e));
+      if (attachments.length && loadedId === noteId) insertAttachments(ed, attachments.map(nodeForAttachment));
+    } catch (e) {
+      app.showError(e);
+    }
+  }
+
+  function handlePaste(event: ClipboardEvent): boolean {
+    const data = event.clipboardData;
+    const files = [...(data?.files ?? [])];
+    if (files.length === 0) return false;
+    // Apps like LibreOffice put a picture of copied text on the clipboard as well;
+    // when there's text, paste the text.
+    if (data?.getData("text/plain").trim()) return false;
+    event.preventDefault();
+    void addFiles(files);
+    return true;
+  }
+
+  function handleDrop(view: EditorView, event: DragEvent, moved: boolean): boolean {
+    const dt = event.dataTransfer;
+    // A note dragged from the note list isn't content for this note.
+    if (dt?.types.includes(NOTE_DRAG_TYPE)) {
+      event.preventDefault();
+      return true;
+    }
+    if (moved || !dt?.files?.length) return false;
+    event.preventDefault();
+    const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+    void addFiles([...dt.files], pos);
+    return true;
+  }
+
+  function attachmentMenu(id: string): MenuItem[] {
+    return [
+      { label: "Open", action: () => api.openAttachment(id).catch((e) => app.showError(e)) },
+      {
+        label: "Save a Copy…",
+        action: () =>
+          api
+            .saveAttachmentAs(id)
+            .then((saved) => saved && app.showInfo("Saved"))
+            .catch((e) => app.showError(e)),
+      },
+      { kind: "separator" },
+      { label: "Delete", action: () => editor?.chain().focus().deleteSelection().run(), danger: true },
+    ];
+  }
+
+  /** Right-click: actions for images/files and table cells instead of the browser menu. */
+  function openContextMenu(view: EditorView, event: MouseEvent): boolean {
+    const ed = editor;
+    if (!ed) return false;
+    const target = event.target as HTMLElement;
+    const attachmentEl = target.closest<HTMLElement>("[data-attachment-id]");
+    if (attachmentEl) {
+      event.preventDefault();
+      const id = attachmentEl.dataset.attachmentId!;
+      const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+      if (at && at.inside >= 0) ed.commands.setNodeSelection(at.inside);
+      const items = attachmentMenu(id);
+      tableMenu = { x: event.clientX, y: event.clientY, items: ed.isEditable ? items : items.slice(0, 2) };
+      return true;
+    }
+    return openTableMenu(view, event);
+  }
+
   /** Right-click inside a table cell: table actions instead of the browser menu. */
   function openTableMenu(view: EditorView, event: MouseEvent): boolean {
     const ed = editor;
@@ -105,6 +220,8 @@
         Placeholder.configure({ placeholder: "Start writing…" }),
         // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
         TableKit.configure({ table: { resizable: true, cellMinWidth: 60 } }),
+        ImageNode,
+        FileNode,
         Shortcuts,
         TabKey,
       ],
@@ -116,8 +233,18 @@
         handleDOMEvents: {
           click: (_view, event) => openLink(event),
           auxclick: (_view, event) => openLink(event),
-          contextmenu: (view, event) => openTableMenu(view, event),
+          contextmenu: (view, event) => openContextMenu(view, event),
+          // Double-click an image or file to open it in its usual app.
+          dblclick: (_view, event) => {
+            const el = (event.target as HTMLElement).closest<HTMLElement>("[data-attachment-id]");
+            if (!el?.dataset.attachmentId) return false;
+            event.preventDefault();
+            api.openAttachment(el.dataset.attachmentId).catch((e) => app.showError(e));
+            return true;
+          },
         },
+        handlePaste: (_view, event) => handlePaste(event),
+        handleDrop: (view, event, _slice, moved) => handleDrop(view, event, moved),
       },
       onTransaction: () => version++,
       onUpdate: ({ editor: e }) => {
@@ -194,7 +321,7 @@
       </button>
     {/if}
     <span class="divider"></span>
-    <EditorToolbar {editor} {version} disabled={readOnly} />
+    <EditorToolbar {editor} {version} disabled={readOnly} onattach={attachFromPicker} />
     <div class="spacer" data-tauri-drag-region></div>
     {#if note && !note.deletedAt}
       <button
@@ -281,6 +408,14 @@
     align-items: center;
     gap: 2px;
     padding: 0 12px;
+    /* The toolbar hides buttons based on this width (see EditorToolbar). */
+    container: editor-header / inline-size;
+  }
+  .header > :global(*) {
+    flex: none;
+  }
+  .header > :global(.toolbar) {
+    flex: 0 1 auto;
   }
   .spacer {
     flex: 1;
@@ -449,6 +584,67 @@
     height: 0;
     pointer-events: none;
     color: var(--text-tertiary);
+  }
+
+  /* ----------------------------------------------------------- attachments */
+  .scroll :global(.prose img.note-image) {
+    display: block;
+    max-width: 100%;
+    max-height: 75vh;
+    height: auto;
+    margin: 0.6em 0;
+    border-radius: var(--radius-md);
+    cursor: default;
+  }
+  .scroll :global(.prose .note-file) {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 440px;
+    margin: 0.5em 0;
+    padding: 8px 12px 8px 8px;
+    border: 1px solid var(--separator-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-input);
+    cursor: default;
+    user-select: none;
+  }
+  .scroll :global(.prose .note-file:hover) {
+    background: var(--bg-active);
+  }
+  .scroll :global(.note-file-icon) {
+    flex: none;
+    display: grid;
+    place-items: end center;
+    width: 32px;
+    height: 40px;
+    padding-bottom: 5px;
+    border-radius: 4px 10px 4px 4px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+  .scroll :global(.note-file-text) {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .scroll :global(.note-file-name) {
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .scroll :global(.note-file-size) {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+  }
+  .scroll :global(.prose .ProseMirror-selectednode.note-image),
+  .scroll :global(.prose .ProseMirror-selectednode.note-file) {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
   }
 
   /* ---------------------------------------------------------------- tables */

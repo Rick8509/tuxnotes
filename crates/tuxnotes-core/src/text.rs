@@ -18,6 +18,7 @@ const BLOCK_NODES: &[&str] = &[
     "horizontalRule",
     "tableRow",
     "image",
+    "attachment",
 ];
 
 /// Node types whose text is separated by a space (table cells on the same row).
@@ -62,6 +63,15 @@ fn walk(node: &Value, out: &mut String, in_cell: bool) {
         out.push_str(text);
     }
     let node_type = node.get("type").and_then(Value::as_str).unwrap_or("");
+    // An attached file's name is part of the note's text, so search finds it.
+    if node_type == "attachment"
+        && let Some(name) = node
+            .get("attrs")
+            .and_then(|a| a.get("filename"))
+            .and_then(Value::as_str)
+    {
+        out.push_str(name);
+    }
     if node_type == "hardBreak" {
         out.push(if in_cell { ' ' } else { '\n' });
     }
@@ -213,6 +223,21 @@ mod tests {
         let out = extract(&doc);
         assert_eq!(out.title, "Name Phone");
         assert_eq!(out.snippet, "Tux 123");
+    }
+
+    #[test]
+    fn attachments_contribute_their_file_name() {
+        let doc = json!({ "type": "doc", "content": [
+            para("Trip"),
+            { "type": "image", "attrs": { "attachmentId": "a" } },
+            { "type": "attachment", "attrs": { "attachmentId": "b", "filename": "tickets.pdf", "size": 10 } },
+            para("Pack light"),
+        ]});
+        let out = extract(&doc);
+        assert_eq!(out.plain, "Trip\ntickets.pdf\nPack light");
+        assert!(!is_blank(
+            &json!({ "type": "doc", "content": [{ "type": "image", "attrs": { "attachmentId": "a" } }] })
+        ));
     }
 
     #[test]

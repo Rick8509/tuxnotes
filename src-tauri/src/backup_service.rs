@@ -87,6 +87,7 @@ pub struct BackupService {
     data_dir: PathBuf,
     config_dir: PathBuf,
     db_path: PathBuf,
+    attachments_dir: PathBuf,
     app_version: String,
     /// Cached access token (refresh token lives in the vault).
     session: AsyncMutex<Option<Tokens>>,
@@ -127,6 +128,7 @@ impl BackupService {
             http,
             settings: SettingsStore::load(config_dir.join("settings.json")),
             vault,
+            attachments_dir: data_dir.join("attachments"),
             data_dir,
             config_dir,
             db_path,
@@ -376,6 +378,7 @@ impl BackupService {
 
         let app2 = app.clone();
         let archive2 = archive.clone();
+        let attachments = self.attachments_dir.clone();
         let version = self.app_version.clone();
         let manifest = tauri::async_runtime::spawn_blocking(move || {
             let state = app2.state::<AppState>();
@@ -383,7 +386,7 @@ impl BackupService {
                 .store
                 .lock()
                 .map_err(|_| "note store unavailable".to_string())?;
-            backup::create_backup(&store, &archive2, &version).map_err(err)
+            backup::create_backup(&store, Some(&attachments), &archive2, &version).map_err(err)
         })
         .await
         .map_err(err)??;
@@ -501,18 +504,21 @@ impl BackupService {
         let stamp = now_ms();
         let archive = tmp.join(format!("restore-{stamp}.zip"));
         let staged_db = tmp.join(format!("restore-{stamp}.db"));
-        let mut cleanup = vec![archive.clone()];
+        let staged_attachments = tmp.join(format!("restore-{stamp}-attachments"));
+        let mut cleanup = vec![archive.clone(), staged_attachments.clone()];
         cleanup.extend(backup::db_with_sidecars(&staged_db));
         let _cleanup = RemoveOnDrop(cleanup);
         fs::write(&archive, &bytes).map_err(err)?;
 
         let app2 = app.clone();
         let db_path = self.db_path.clone();
+        let attachments = self.attachments_dir.clone();
         let safety_dir = self.data_dir.join("safety");
         let version = self.app_version.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            // 1. Fully validate the backup into a separate file.
-            let manifest = backup::extract_backup(&archive, &staged_db).map_err(err)?;
+            // 1. Fully validate the backup (database and attachments) into separate files.
+            let manifest = backup::extract_backup(&archive, &staged_db, Some(&staged_attachments))
+                .map_err(err)?;
             let state = app2.state::<AppState>();
             let mut store = state
                 .store
@@ -524,10 +530,16 @@ impl BackupService {
                 "{SAFETY_PREFIX}{}",
                 backup::backup_file_name(now_ms()).trim_start_matches("tuxnotes-backup-")
             ));
-            backup::create_backup(&store, &safety, &version).map_err(err)?;
+            backup::create_backup(&store, Some(&attachments), &safety, &version).map_err(err)?;
             let _ = backup::prune_local_backups(&safety_dir, SAFETY_PREFIX, SAFETY_KEEP);
-            // 3. Swap the database files while no connection is open.
-            swap_database(&mut store, &db_path, &staged_db)?;
+            // 3. Swap the database and attachments while no connection is open.
+            swap_database(
+                &mut store,
+                &db_path,
+                &staged_db,
+                &attachments,
+                &staged_attachments,
+            )?;
             Ok::<_, String>(RestoreResult {
                 note_count: manifest.note_count,
                 folder_count: manifest.folder_count,
@@ -551,22 +563,53 @@ impl BackupService {
     }
 }
 
-/// Replace the live database with `staged` (already validated), keeping the
-/// store usable on every failure path.
-fn swap_database(store: &mut Store, live: &Path, staged: &Path) -> CmdResult<()> {
+/// Replace the live database and attachments folder with the staged ones (already
+/// validated), keeping the previous state and a usable store on every failure path.
+fn swap_database(
+    store: &mut Store,
+    live_db: &Path,
+    staged_db: &Path,
+    live_attachments: &Path,
+    staged_attachments: &Path,
+) -> CmdResult<()> {
     // Close the live connection (an in-memory placeholder takes its place).
     let placeholder = Store::open_in_memory().map_err(err)?;
     drop(std::mem::replace(store, placeholder));
+    let reopen = |store: &mut Store| -> CmdResult<()> {
+        *store = Store::open(live_db).map_err(err)?;
+        Ok(())
+    };
 
-    for sidecar in backup::db_with_sidecars(live).iter().skip(1) {
+    for sidecar in backup::db_with_sidecars(live_db).iter().skip(1) {
         let _ = fs::remove_file(sidecar);
     }
-    if let Err(e) = fs::rename(staged, live) {
-        *store = Store::open(live).map_err(err)?;
+    // Move the current attachments aside so they can be put back if anything fails.
+    let previous = live_attachments.with_file_name("attachments.before-restore");
+    let _ = fs::remove_dir_all(&previous);
+    let had_attachments = live_attachments.exists();
+    if had_attachments && let Err(e) = fs::rename(live_attachments, &previous) {
+        reopen(store)?;
+        return Err(format!("Couldn't replace the attachments: {e}"));
+    }
+    let put_back = || {
+        let _ = fs::remove_dir_all(live_attachments);
+        if had_attachments {
+            let _ = fs::rename(&previous, live_attachments);
+        }
+    };
+    if let Err(e) = fs::rename(staged_attachments, live_attachments) {
+        put_back();
+        reopen(store)?;
+        return Err(format!("Couldn't replace the attachments: {e}"));
+    }
+    if let Err(e) = fs::rename(staged_db, live_db) {
+        put_back();
+        reopen(store)?;
         return Err(format!("Couldn't replace the notes database: {e}"));
     }
-    *store = Store::open(live).map_err(err)?;
-    log::info!("restored notes database from backup");
+    reopen(store)?;
+    let _ = fs::remove_dir_all(&previous);
+    log::info!("restored notes and attachments from backup");
     Ok(())
 }
 
@@ -575,7 +618,11 @@ struct RemoveOnDrop(Vec<PathBuf>);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
         for p in &self.0 {
-            let _ = fs::remove_file(p);
+            if p.is_dir() {
+                let _ = fs::remove_dir_all(p);
+            } else {
+                let _ = fs::remove_file(p);
+            }
         }
     }
 }
@@ -599,6 +646,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let live = dir.join("notes.db");
         let staged = dir.join("staged.db");
+        let (live_att, staged_att) = (dir.join("attachments"), dir.join("staged-attachments"));
+        fs::create_dir_all(live_att.join("old-file")).unwrap();
+        fs::create_dir_all(staged_att.join("restored-file")).unwrap();
 
         let mut store = Store::open(&live).unwrap();
         let n = store.create_note(None).unwrap();
@@ -612,8 +662,10 @@ mod tests {
                 .update_note_content(&m.id, &json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"restored"}]}]}))
                 .unwrap();
         }
-        swap_database(&mut store, &live, &staged).unwrap();
+        swap_database(&mut store, &live, &staged, &live_att, &staged_att).unwrap();
         assert!(!staged.exists());
+        assert!(live_att.join("restored-file").exists() && !live_att.join("old-file").exists());
+        assert!(!dir.join("attachments.before-restore").exists());
         assert_eq!(store.search("restored", 10).unwrap().len(), 1);
         assert!(store.search("old", 10).unwrap().is_empty());
         // Persisted on disk, not just in memory.
@@ -627,10 +679,24 @@ mod tests {
             1
         );
 
-        // A failed swap (missing staged file) leaves the live database open and intact.
+        // A failed swap (missing staged files) leaves the live database and attachments intact.
         let mut store = Store::open(&live).unwrap();
-        assert!(swap_database(&mut store, &live, &dir.join("missing.db")).is_err());
+        fs::create_dir_all(dir.join("staged2")).unwrap();
+        assert!(
+            swap_database(
+                &mut store,
+                &live,
+                &dir.join("missing.db"),
+                &live_att,
+                &dir.join("staged2")
+            )
+            .is_err()
+        );
         assert_eq!(store.search("restored", 10).unwrap().len(), 1);
+        assert!(
+            live_att.join("restored-file").exists(),
+            "attachments put back"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

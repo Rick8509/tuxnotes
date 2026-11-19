@@ -7,6 +7,7 @@
 //! This crate deliberately has no Tauri/GTK dependencies so it can be built and
 //! tested anywhere.
 
+pub mod attachments;
 pub mod backup;
 pub mod error;
 pub mod migrations;
@@ -14,6 +15,7 @@ pub mod models;
 pub mod store;
 pub mod text;
 
+pub use attachments::Attachment;
 pub use backup::Manifest;
 pub use error::{Error, Result};
 pub use models::{Folder, Note, NoteFilter, NoteSummary};

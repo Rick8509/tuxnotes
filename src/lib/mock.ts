@@ -3,7 +3,9 @@
 // crate remains the source of truth (and is what the tests cover).
 
 import { extractText, isBlank } from "./text";
-import type { BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import { registerPreviewUrl } from "./attachmentUrls";
+import type { AttachResult, Attachment, BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import { IMAGE_MIMES } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
 
@@ -303,4 +305,65 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
   const result = await handler(args);
   persist();
   return structuredClone(result) as T;
+}
+
+// --------------------------------------------------------------- attachments
+// Kept in memory only (object URLs), which is enough for UI work in the browser.
+
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const attachments = new Map<string, { attachment: Attachment; url: string }>();
+
+export async function mockAddAttachment(noteId: string, file: File): Promise<Attachment> {
+  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`“${file.name}” is too large to attach (the limit is 50 MB).`);
+  const name = (file.name || "pasted-image.png").split(/[\\/]/).pop() || "attachment";
+  const attachment: Attachment = {
+    id: uid(),
+    noteId,
+    filename: name,
+    mime: IMAGE_MIMES.includes(file.type) ? file.type : file.type && !file.type.startsWith("image/") ? file.type : "application/octet-stream",
+    size: file.size,
+    sha256: "",
+    createdAt: now(),
+  };
+  const url = URL.createObjectURL(file);
+  attachments.set(attachment.id, { attachment, url });
+  registerPreviewUrl(attachment.id, url);
+  return attachment;
+}
+
+export function mockAttachFiles(noteId: string): Promise<AttachResult> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.style.display = "none";
+    input.onchange = async () => {
+      const result: AttachResult = { attachments: [], errors: [] };
+      for (const file of input.files ?? []) {
+        try {
+          result.attachments.push(await mockAddAttachment(noteId, file));
+        } catch (e) {
+          result.errors.push(String((e as Error).message ?? e));
+        }
+      }
+      input.remove();
+      resolve(result);
+    };
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+export async function mockOpenAttachment(id: string) {
+  const entry = attachments.get(id) ?? fail("attachment not found");
+  window.open(entry.url, "_blank", "noopener");
+}
+
+export async function mockSaveAttachment(id: string): Promise<boolean> {
+  const entry = attachments.get(id) ?? fail("attachment not found");
+  const a = document.createElement("a");
+  a.href = entry.url;
+  a.download = entry.attachment.filename;
+  a.click();
+  return true;
 }

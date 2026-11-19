@@ -86,6 +86,22 @@ describe("tables", () => {
   });
 });
 
+describe("attachments", () => {
+  it("contribute their file name (same as Rust)", () => {
+    const out = extractText({
+      type: "doc",
+      content: [
+        para("Trip"),
+        { type: "image", attrs: { attachmentId: "a" } },
+        { type: "attachment", attrs: { attachmentId: "b", filename: "tickets.pdf", size: 10 } },
+        para("Pack light"),
+      ],
+    });
+    expect(out.plain).toBe("Trip\ntickets.pdf\nPack light");
+    expect(isBlank({ type: "doc", content: [{ type: "image", attrs: { attachmentId: "a" } }] })).toBe(false);
+  });
+});
+
 describe("isBlank", () => {
   it("matches the Rust rules", () => {
     expect(isBlank({ type: "doc", content: [{ type: "paragraph" }, { type: "heading" }] })).toBe(true);

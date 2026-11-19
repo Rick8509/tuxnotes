@@ -11,6 +11,7 @@ const BLOCK_NODES = new Set([
   "horizontalRule",
   "tableRow",
   "image",
+  "attachment",
 ]);
 const INLINE_SEPARATED_NODES = new Set(["tableCell", "tableHeader"]);
 
@@ -29,6 +30,11 @@ function walk(node: unknown, out: string[], inCell = false): void {
   const n = node as { type?: unknown; text?: unknown; content?: unknown };
   if (typeof n.text === "string") out.push(n.text);
   const type = typeof n.type === "string" ? n.type : "";
+  // An attached file's name is part of the note's text, so search finds it.
+  if (type === "attachment") {
+    const name = (n as { attrs?: { filename?: unknown } }).attrs?.filename;
+    if (typeof name === "string") out.push(name);
+  }
   if (type === "hardBreak") out.push(inCell ? " " : "\n");
   const isCell = INLINE_SEPARATED_NODES.has(type);
   if (Array.isArray(n.content)) for (const child of n.content) walk(child, out, inCell || isCell);

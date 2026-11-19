@@ -1,3 +1,4 @@
+mod attachments;
 mod backup_service;
 mod commands;
 mod credentials;
@@ -16,6 +17,8 @@ use tuxnotes_core::Store;
 pub struct AppState {
     pub store: Mutex<Store>,
     pub backup: BackupService,
+    /// `<data dir>/attachments`: one folder per attachment, named by its id.
+    pub attachments_dir: std::path::PathBuf,
 }
 
 /// How often the scheduler checks whether an automatic backup is due.
@@ -39,6 +42,9 @@ pub fn run() {
         // Remember window size, position and maximized state between launches.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        // Serves note images/files to the editor by id (see attachments.rs).
+        .register_asynchronous_uri_scheme_protocol("attachment", attachments::handle_protocol)
         .setup(|app| {
             // ~/.local/share/<identifier>/notes.db and ~/.config/<identifier>/settings.json
             let data_dir = app.path().app_data_dir()?;
@@ -58,6 +64,16 @@ pub fn run() {
                 Ok(n) => log::info!("removed {n} empty note(s) left from last session"),
                 Err(e) => log::warn!("could not clean up empty notes: {e}"),
             }
+            let attachments_dir = data_dir.join("attachments");
+            match store.collect_unused_attachments(
+                &attachments_dir,
+                backup_service::now_ms(),
+                tuxnotes_core::attachments::UNUSED_GRACE_MS,
+            ) {
+                Ok(0) => {}
+                Ok(n) => log::info!("removed {n} attachment(s) no note uses any more"),
+                Err(e) => log::warn!("could not clean up attachments: {e}"),
+            }
             let backup = BackupService::new(
                 data_dir,
                 config_dir,
@@ -68,6 +84,7 @@ pub fn run() {
             app.manage(AppState {
                 store: Mutex::new(store),
                 backup,
+                attachments_dir,
             });
             spawn_auto_backup(app.handle().clone());
             Ok(())
@@ -99,6 +116,10 @@ pub fn run() {
             commands::list_backups,
             commands::restore_backup,
             commands::app_info,
+            attachments::add_attachment,
+            attachments::attach_files,
+            attachments::open_attachment,
+            attachments::save_attachment_as,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TuxNotes");

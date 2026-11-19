@@ -30,7 +30,7 @@ const NOTE_COLUMNS: &str =
     "id, folder_id, title, content_json, is_pinned, created_at, updated_at, deleted_at";
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
     /// Last timestamp handed out; guarantees strictly increasing timestamps
     /// so "most recently edited" ordering is stable even within one millisecond.
     last_ts: Cell<i64>,
@@ -63,7 +63,7 @@ impl Store {
     }
 
     /// Current time in Unix milliseconds, strictly increasing per store.
-    fn now(&self) -> i64 {
+    pub(crate) fn now(&self) -> i64 {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)

@@ -1,4 +1,5 @@
-//! Backup archives: a zip holding `manifest.json` plus a consistent copy of `notes.db`.
+//! Backup archives: a zip holding `manifest.json`, a consistent copy of `notes.db`
+//! and (format 2+) the note attachments under `attachments/<id>/<filename>`.
 //!
 //! Creating a backup never blocks the running app for long (it uses `VACUUM INTO`),
 //! and restoring is two-phase: [`extract_backup`] fully validates the archive into a
@@ -15,12 +16,16 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+use crate::attachments::{MAX_ATTACHMENT_BYTES, is_valid_id, sanitize_filename};
 use crate::error::{Error, Result};
 use crate::migrations::SCHEMA_VERSION;
 use crate::store::Store;
 
 /// Version of the archive layout. Bump only for incompatible changes.
-pub const BACKUP_FORMAT_VERSION: u32 = 1;
+/// 1: manifest + notes.db. 2: adds attachments.
+pub const BACKUP_FORMAT_VERSION: u32 = 2;
+/// Folder inside the archive that holds attachments.
+pub const ATTACHMENTS_PREFIX: &str = "attachments/";
 /// Identifies TuxNotes archives.
 pub const BACKUP_APP_ID: &str = "TuxNotes";
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -42,6 +47,18 @@ pub struct Manifest {
     pub database_size: u64,
     /// Lower-case hex SHA-256 of `notes.db`.
     pub database_sha256: String,
+    /// Attachment files in the archive (empty for format 1).
+    #[serde(default)]
+    pub attachments: Vec<AttachmentEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentEntry {
+    /// `<id>/<filename>`, relative to the attachments folder.
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// File name for a new backup, e.g. `tuxnotes-backup-20261119-140533.zip` (UTC).
@@ -57,10 +74,15 @@ pub fn backup_file_name(created_at_ms: i64) -> String {
     )
 }
 
-/// Write a backup of `store` to `dest` (which must not exist). The archive is
-/// written to a temporary file first and renamed into place, so `dest` is
-/// either complete or absent.
-pub fn create_backup(store: &Store, dest: &Path, app_version: &str) -> Result<Manifest> {
+/// Write a backup of `store` (and the files in `attachments_dir`, if given) to `dest`,
+/// which must not exist. The archive is written to a temporary file first and renamed
+/// into place, so `dest` is either complete or absent.
+pub fn create_backup(
+    store: &Store,
+    attachments_dir: Option<&Path>,
+    dest: &Path,
+    app_version: &str,
+) -> Result<Manifest> {
     if dest.exists() {
         return Err(Error::invalid(format!(
             "Backup target already exists: {}",
@@ -76,32 +98,83 @@ pub fn create_backup(store: &Store, dest: &Path, app_version: &str) -> Result<Ma
     store.snapshot_to(&snapshot)?;
     let (folder_count, note_count) = store.counts()?;
     let (database_sha256, database_size) = sha256_file(&snapshot)?;
-
-    let manifest = Manifest {
-        app: BACKUP_APP_ID.to_string(),
-        format_version: BACKUP_FORMAT_VERSION,
-        app_version: app_version.to_string(),
-        schema_version: store.schema_version()?,
-        created_at: now_ms(),
-        folder_count,
-        note_count,
-        database_size,
-        database_sha256,
+    // Attachments listed in the snapshot, so the files match the database exactly.
+    let attachment_rows = match attachments_dir {
+        Some(_) => attachments_in(&snapshot)?,
+        None => Vec::new(),
     };
 
+    let mut attachments = Vec::new();
     {
         let mut zip = ZipWriter::new(File::create(&partial)?);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .large_file(database_size >= u32::MAX as u64);
-        zip.start_file(MANIFEST_FILE, options)?;
-        zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
-        zip.start_file(DATABASE_FILE, options)?;
+        let options = |size: u64| {
+            SimpleFileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .large_file(size >= u32::MAX as u64)
+        };
+        zip.start_file(DATABASE_FILE, options(database_size))?;
         io::copy(&mut File::open(&snapshot)?, &mut zip)?;
+
+        if let Some(dir) = attachments_dir {
+            for (id, filename) in attachment_rows {
+                // A missing file is skipped rather than failing the whole backup.
+                let Ok(mut file) = File::open(dir.join(&id).join(&filename)) else {
+                    continue;
+                };
+                let path = format!("{id}/{filename}");
+                zip.start_file(format!("{ATTACHMENTS_PREFIX}{path}"), options(0))?;
+                let mut hasher = Sha256::new();
+                let size = io::copy(&mut file, &mut Tee(&mut zip, &mut hasher))?;
+                attachments.push(AttachmentEntry {
+                    path,
+                    size,
+                    sha256: to_hex(&hasher.finalize()),
+                });
+            }
+        }
+
+        let manifest = Manifest {
+            app: BACKUP_APP_ID.to_string(),
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: app_version.to_string(),
+            schema_version: store.schema_version()?,
+            created_at: now_ms(),
+            folder_count,
+            note_count,
+            database_size,
+            database_sha256,
+            attachments,
+        };
+        zip.start_file(MANIFEST_FILE, options(0))?;
+        zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
         zip.finish()?.sync_all()?;
+        fs::rename(&partial, dest)?;
+        Ok(manifest)
     }
-    fs::rename(&partial, dest)?;
-    Ok(manifest)
+}
+
+/// `(id, filename)` of every attachment recorded in a database file (read-only).
+fn attachments_in(db: &Path) -> Result<Vec<(String, String)>> {
+    let conn =
+        rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let has_table: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attachments')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_table {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare("SELECT id, filename FROM attachments ORDER BY created_at")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|(id, name)| is_valid_id(id) && *name == sanitize_filename(name))
+        .collect())
 }
 
 /// Read and validate just the manifest of a backup archive.
@@ -110,13 +183,18 @@ pub fn read_manifest(archive: &Path) -> Result<Manifest> {
     read_manifest_from(&mut zip)
 }
 
-/// Fully validate a backup and unpack its database to `dest_db` (must not exist).
+/// Fully validate a backup and unpack it: the database to `dest_db` and, if
+/// `dest_attachments` is given, the attachments into that folder. Neither may exist yet.
 ///
-/// Checks: it's a TuxNotes archive of a supported version, the database matches
-/// its checksum, it opens, migrates to the current schema, and passes SQLite's
-/// integrity check. On any failure `dest_db` is removed.
-pub fn extract_backup(archive: &Path, dest_db: &Path) -> Result<Manifest> {
-    if dest_db.exists() {
+/// Checks: it's a TuxNotes archive of a supported version, every file matches its
+/// checksum, attachment paths are safe, and the database opens, migrates to the current
+/// schema and passes SQLite's integrity check. On any failure nothing is left behind.
+pub fn extract_backup(
+    archive: &Path,
+    dest_db: &Path,
+    dest_attachments: Option<&Path>,
+) -> Result<Manifest> {
+    if dest_db.exists() || dest_attachments.is_some_and(Path::exists) {
         return Err(Error::invalid(format!(
             "Restore target already exists: {}",
             dest_db.display()
@@ -126,39 +204,39 @@ pub fn extract_backup(archive: &Path, dest_db: &Path) -> Result<Manifest> {
     let manifest = read_manifest_from(&mut zip)?;
 
     let result = (|| {
-        {
-            let entry = zip.by_name(DATABASE_FILE).map_err(|_| {
-                Error::InvalidBackup("The backup doesn't contain a notes database.".into())
-            })?;
-            let mut out = File::create(dest_db)?;
-            let mut hasher = Sha256::new();
-            let mut limited = entry.take(MAX_DATABASE_BYTES + 1);
-            let mut buf = vec![0u8; 64 * 1024];
-            let mut total: u64 = 0;
-            loop {
-                let n = limited.read(&mut buf)?;
-                if n == 0 {
-                    break;
-                }
-                total += n as u64;
-                if total > MAX_DATABASE_BYTES {
-                    return Err(Error::InvalidBackup("The backup is too large.".into()));
-                }
-                hasher.update(&buf[..n]);
-                out.write_all(&buf[..n])?;
-            }
-            out.sync_all()?;
-            if total != manifest.database_size
-                || to_hex(&hasher.finalize()) != manifest.database_sha256
-            {
-                return Err(Error::InvalidBackup(
-                    "The backup is damaged (checksum mismatch).".into(),
-                ));
-            }
-        }
+        extract_verified(
+            &mut zip,
+            DATABASE_FILE,
+            dest_db,
+            MAX_DATABASE_BYTES,
+            manifest.database_size,
+            &manifest.database_sha256,
+        )?;
         // Opening runs migrations, so older backups are upgraded here.
         let restored = Store::open(dest_db)?;
         restored.check_integrity()?;
+        drop(restored);
+
+        if let Some(dir) = dest_attachments {
+            fs::create_dir_all(dir)?;
+            for entry in &manifest.attachments {
+                let (id, name) = entry.path.split_once('/').unwrap_or(("", ""));
+                if !is_valid_id(id) || name.is_empty() || name != sanitize_filename(name) {
+                    return Err(Error::InvalidBackup(
+                        "The backup contains an unsafe attachment path.".into(),
+                    ));
+                }
+                fs::create_dir_all(dir.join(id))?;
+                extract_verified(
+                    &mut zip,
+                    &format!("{ATTACHMENTS_PREFIX}{}", entry.path),
+                    &dir.join(id).join(name),
+                    MAX_ATTACHMENT_BYTES,
+                    entry.size,
+                    &entry.sha256,
+                )?;
+            }
+        }
         Ok(())
     })();
 
@@ -166,9 +244,50 @@ pub fn extract_backup(archive: &Path, dest_db: &Path) -> Result<Manifest> {
         for path in db_with_sidecars(dest_db) {
             let _ = fs::remove_file(path);
         }
+        if let Some(dir) = dest_attachments {
+            let _ = fs::remove_dir_all(dir);
+        }
         return Err(e);
     }
     Ok(manifest)
+}
+
+/// Copy one archive entry to `dest`, enforcing a size limit and the expected checksum.
+fn extract_verified(
+    zip: &mut ZipArchive<File>,
+    name: &str,
+    dest: &Path,
+    max: u64,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<()> {
+    let entry = zip
+        .by_name(name)
+        .map_err(|_| Error::InvalidBackup(format!("The backup is incomplete (missing {name}).")))?;
+    let mut out = File::create(dest)?;
+    let mut hasher = Sha256::new();
+    let mut limited = entry.take(max + 1);
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = limited.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > max {
+            return Err(Error::InvalidBackup("The backup is too large.".into()));
+        }
+        hasher.update(&buf[..n]);
+        out.write_all(&buf[..n])?;
+    }
+    out.sync_all()?;
+    if total != expected_size || to_hex(&hasher.finalize()) != expected_sha256 {
+        return Err(Error::InvalidBackup(
+            "The backup is damaged (checksum mismatch).".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Keep only the `keep` newest files in `dir` whose names start with `prefix`
@@ -235,6 +354,20 @@ fn sha256_file(path: &Path) -> Result<(String, u64)> {
     let mut hasher = Sha256::new();
     let size = io::copy(&mut file, &mut HashWriter(&mut hasher))?;
     Ok((to_hex(&hasher.finalize()), size))
+}
+
+/// Writes to an inner writer while hashing what passes through.
+struct Tee<'a, W: Write>(&'a mut W, &'a mut Sha256);
+
+impl<W: Write> Write for Tee<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.0.write(buf)?;
+        self.1.update(&buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
 }
 
 struct HashWriter<'a>(&'a mut Sha256);

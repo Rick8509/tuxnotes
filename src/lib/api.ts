@@ -5,8 +5,10 @@
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type {
-  AutoBackup,
   AppInfo,
+  AttachResult,
+  Attachment,
+  AutoBackup,
   BackupInfo,
   BackupStatus,
   DocJSON,
@@ -69,4 +71,28 @@ export const api = {
   restoreBackup: (id: string) => call<RestoreResult>("restore_backup", { id }),
 
   appInfo: () => call<AppInfo>("app_info"),
+
+  /** Add a pasted or dropped file to a note. The bytes go over IPC as raw binary. */
+  async addAttachment(noteId: string, file: File): Promise<Attachment> {
+    if (!isTauri) return (await import("./mock")).mockAddAttachment(noteId, file);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    try {
+      return await tauriInvoke<Attachment>("add_attachment", bytes, {
+        headers: {
+          "x-note-id": encodeURIComponent(noteId),
+          "x-filename": encodeURIComponent(file.name || "pasted-image.png"),
+          "x-mime": encodeURIComponent(file.type || ""),
+        },
+      });
+    } catch (err) {
+      throw new Error(typeof err === "string" ? err : String((err as Error)?.message ?? err));
+    }
+  },
+  /** Show the file picker and attach the chosen files. */
+  attachFiles: (noteId: string) =>
+    isTauri ? call<AttachResult>("attach_files", { noteId }) : import("./mock").then((m) => m.mockAttachFiles(noteId)),
+  openAttachment: (id: string) =>
+    isTauri ? call<void>("open_attachment", { id }) : import("./mock").then((m) => m.mockOpenAttachment(id)),
+  saveAttachmentAs: (id: string) =>
+    isTauri ? call<boolean>("save_attachment_as", { id }) : import("./mock").then((m) => m.mockSaveAttachment(id)),
 };

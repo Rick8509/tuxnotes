@@ -19,6 +19,7 @@ tuxnotes-core = { path = "../crates/tuxnotes-core" }
 tuxnotes-gdrive = { path = "../crates/tuxnotes-gdrive" }
 tauri = { version = "2.12", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 keyring = { version = "3", features = ["async-secret-service", "tokio", "crypto-rust"] }

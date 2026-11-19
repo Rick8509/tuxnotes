@@ -62,6 +62,20 @@ const MIGRATIONS: &[&str] = &[
         VALUES (new.seq, new.title, new.content_text);
     END;
     "#,
+    // v2: attachments (images and files). Files live on disk in `<attachments dir>/<id>/<filename>`;
+    // notes refer to them by id only, so they survive moving between computers.
+    r#"
+    CREATE TABLE attachments (
+        id          TEXT PRIMARY KEY NOT NULL,
+        note_id     TEXT,
+        filename    TEXT NOT NULL,
+        mime        TEXT NOT NULL,
+        size        INTEGER NOT NULL,
+        sha256      TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX attachments_note_idx ON attachments(note_id);
+    "#,
 ];
 
 /// The schema version this build of TuxNotes writes.

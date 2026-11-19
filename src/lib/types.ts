@@ -85,3 +85,24 @@ export interface AppInfo {
   database: string;
   configDir: string;
 }
+
+// ------------------------------------------------------------- attachments
+// Mirrors tuxnotes-core/src/attachments.rs and src-tauri/src/attachments.rs.
+
+export interface Attachment {
+  id: string;
+  noteId: string | null;
+  filename: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  createdAt: number;
+}
+
+export interface AttachResult {
+  attachments: Attachment[];
+  errors: string[];
+}
+
+/** Image types shown inline (same list as the Rust side). */
+export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"];

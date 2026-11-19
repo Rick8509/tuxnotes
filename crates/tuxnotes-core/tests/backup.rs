@@ -51,7 +51,7 @@ fn backup_roundtrip_restores_everything() {
     let live = sample_store(dir.path());
     let archive = dir.path().join("b.zip");
 
-    let manifest = create_backup(&live, &archive, "0.1.0").unwrap();
+    let manifest = create_backup(&live, None, &archive, "0.1.0").unwrap();
     assert_eq!(manifest.app, "TuxNotes");
     assert_eq!(manifest.format_version, BACKUP_FORMAT_VERSION);
     assert_eq!(manifest.app_version, "0.1.0");
@@ -68,7 +68,10 @@ fn backup_roundtrip_restores_everything() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 
     let restored_path = dir.path().join("restored.db");
-    assert_eq!(extract_backup(&archive, &restored_path).unwrap(), manifest);
+    assert_eq!(
+        extract_backup(&archive, &restored_path, None).unwrap(),
+        manifest
+    );
     let restored = Store::open(&restored_path).unwrap();
     let titles: Vec<_> = restored
         .list_notes(&NoteFilter::All)
@@ -91,16 +94,16 @@ fn backup_never_overwrites_and_restore_never_overwrites() {
     let dir = tempfile::tempdir().unwrap();
     let live = sample_store(dir.path());
     let archive = dir.path().join("b.zip");
-    create_backup(&live, &archive, "0.1.0").unwrap();
+    create_backup(&live, None, &archive, "0.1.0").unwrap();
     assert!(matches!(
-        create_backup(&live, &archive, "0.1.0"),
+        create_backup(&live, None, &archive, "0.1.0"),
         Err(Error::InvalidInput(_))
     ));
 
     let existing = dir.path().join("existing.db");
     fs::write(&existing, b"keep me").unwrap();
     assert!(matches!(
-        extract_backup(&archive, &existing),
+        extract_backup(&archive, &existing, None),
         Err(Error::InvalidInput(_))
     ));
     assert_eq!(fs::read(&existing).unwrap(), b"keep me");
@@ -128,7 +131,7 @@ fn rejects_files_that_are_not_backups() {
         Err(Error::InvalidBackup(_))
     ));
     assert!(matches!(
-        extract_backup(&other, &dir.path().join("r.db")),
+        extract_backup(&other, &dir.path().join("r.db"), None),
         Err(Error::InvalidBackup(_))
     ));
 }
@@ -138,7 +141,7 @@ fn rejects_tampered_or_corrupt_databases_and_cleans_up() {
     let dir = tempfile::tempdir().unwrap();
     let live = sample_store(dir.path());
     let good = dir.path().join("good.zip");
-    create_backup(&live, &good, "0.1.0").unwrap();
+    create_backup(&live, None, &good, "0.1.0").unwrap();
 
     let tampered = dir.path().join("tampered.zip");
     rewrite(&good, &tampered, |_, db| {
@@ -146,7 +149,7 @@ fn rejects_tampered_or_corrupt_databases_and_cleans_up() {
         db[mid] ^= 0xff;
     });
     let dest = dir.path().join("r.db");
-    let err = extract_backup(&tampered, &dest).unwrap_err();
+    let err = extract_backup(&tampered, &dest, None).unwrap_err();
     assert!(err.to_string().contains("checksum"), "{err}");
     assert!(!dest.exists(), "partial restore must be removed");
 
@@ -157,7 +160,7 @@ fn rejects_tampered_or_corrupt_databases_and_cleans_up() {
         m["databaseSize"] = json!(db.len());
         m["databaseSha256"] = json!(sha256_hex(db));
     });
-    assert!(extract_backup(&garbage, &dest).is_err());
+    assert!(extract_backup(&garbage, &dest, None).is_err());
     for p in backup::db_with_sidecars(&dest) {
         assert!(!p.exists(), "{} left behind", p.display());
     }
@@ -168,7 +171,7 @@ fn rejects_backups_from_newer_versions() {
     let dir = tempfile::tempdir().unwrap();
     let live = sample_store(dir.path());
     let good = dir.path().join("good.zip");
-    create_backup(&live, &good, "0.1.0").unwrap();
+    create_backup(&live, None, &good, "0.1.0").unwrap();
 
     for (field, value) in [("formatVersion", 99), ("schemaVersion", 99)] {
         let newer = dir.path().join(format!("newer-{field}.zip"));
@@ -183,14 +186,14 @@ fn backup_is_consistent_while_store_keeps_changing() {
     let dir = tempfile::tempdir().unwrap();
     let live = sample_store(dir.path());
     let archive = dir.path().join("b.zip");
-    create_backup(&live, &archive, "0.1.0").unwrap();
+    create_backup(&live, None, &archive, "0.1.0").unwrap();
     // Changes after the backup must not appear in it.
     let n = live.create_note(None).unwrap();
     live.update_note_content(&n.id, &doc("After backup"))
         .unwrap();
 
     let restored_path = dir.path().join("r.db");
-    extract_backup(&archive, &restored_path).unwrap();
+    extract_backup(&archive, &restored_path, None).unwrap();
     let restored = Store::open(&restored_path).unwrap();
     assert!(restored.search("after", 10).unwrap().is_empty());
 }
@@ -262,9 +265,9 @@ fn notes_with_tables_save_search_and_survive_backup() {
     );
 
     let archive = dir.path().join("b.zip");
-    create_backup(&live, &archive, "0.1.0").unwrap();
+    create_backup(&live, None, &archive, "0.1.0").unwrap();
     let restored_path = dir.path().join("restored.db");
-    extract_backup(&archive, &restored_path).unwrap();
+    extract_backup(&archive, &restored_path, None).unwrap();
     let restored = Store::open(&restored_path).unwrap();
     assert_eq!(
         restored.get_note(&note.id).unwrap().content,
