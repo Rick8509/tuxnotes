@@ -9,7 +9,9 @@
 
 pub mod attachments;
 pub mod backup;
+pub mod crypto;
 pub mod error;
+pub mod lock;
 pub mod migrations;
 pub mod models;
 pub mod store;
@@ -18,5 +20,6 @@ pub mod text;
 pub use attachments::Attachment;
 pub use backup::Manifest;
 pub use error::{Error, Result};
+pub use lock::LockStatus;
 pub use models::{Folder, Note, NoteFilter, NoteSummary};
 pub use store::Store;

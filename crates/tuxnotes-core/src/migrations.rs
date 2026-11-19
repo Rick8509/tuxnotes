@@ -81,6 +81,26 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE folders ADD COLUMN parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE;
     CREATE INDEX folders_parent_idx ON folders(parent_id);
     "#,
+    // v4: locked notes. A locked note's document is encrypted into `locked_blob`
+    // (content_json/content_text are emptied); `locked_attachments` lists the
+    // attachment ids it uses so cleanup keeps them. `lock_key` holds the notes key,
+    // encrypted with a key derived from the user's password (one row at most).
+    r#"
+    ALTER TABLE notes ADD COLUMN locked_blob BLOB;
+    ALTER TABLE notes ADD COLUMN locked_attachments TEXT NOT NULL DEFAULT '';
+    CREATE TABLE lock_key (
+        id           INTEGER PRIMARY KEY CHECK (id = 1),
+        kdf          TEXT NOT NULL,
+        m_kib        INTEGER NOT NULL,
+        t_cost       INTEGER NOT NULL,
+        p_cost       INTEGER NOT NULL,
+        salt         BLOB NOT NULL,
+        wrapped_key  BLOB NOT NULL,
+        hint         TEXT NOT NULL DEFAULT '',
+        created_at   INTEGER NOT NULL,
+        updated_at   INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// The schema version this build of TuxNotes writes.

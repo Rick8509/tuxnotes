@@ -5,7 +5,7 @@ vi.mock("../api", () => ({ api: {}, isTauri: false }));
 const { compareNotes } = await import("./app.svelte");
 
 const note = (id: string, title: string, createdAt: number, updatedAt: number, isPinned = false) => ({
-  id, folderId: "f", title, snippet: "", isPinned, createdAt, updatedAt, deletedAt: null,
+  id, folderId: "f", title, snippet: "", isPinned, createdAt, updatedAt, deletedAt: null, isLocked: false,
 });
 
 describe("compareNotes", () => {

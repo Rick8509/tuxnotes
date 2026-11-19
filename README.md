@@ -14,6 +14,7 @@
 - **Images and attachments**: paste a screenshot, drag in files, or use the paperclip button. Images show in the note; other files appear as chips you can open (double-click) or save a copy of. Attachments are included in backups
 - Pinned notes, folders with **subfolders** (drag folders to nest or reorder them), and **Recently Deleted** (notes are removed permanently after 30 days)
 - **Undo** right after deleting a note, **duplicate** notes, and **Note Info** (word count, dates, folder)
+- **Password-locked notes**: lock any note from its ⋯ menu; its text is encrypted until you enter the password (see [Locked notes](#locked-notes))
 - Fast full-text search that ignores accents ("cafe" finds "café"); matches are highlighted in the open note, and **Find in note** (`Ctrl+F`) steps through matches
 - **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
 - Rounded, borderless window. Hide the sidebar, use focus mode to hide both side panes, and drag the dividers to resize them; the window remembers its size and layout
@@ -51,6 +52,17 @@
 Everything is stored locally in `~/.local/share/io.github.tuxnotes.TuxNotes/`: `notes.db` (SQLite) and an `attachments/` folder for images and files. Settings live in `~/.config/io.github.tuxnotes.TuxNotes/settings.json`.
 
 Before a restore, TuxNotes saves a copy of your current notes in `~/.local/share/io.github.tuxnotes.TuxNotes/safety/`.
+
+## Locked notes
+
+Choose **Lock Note…** in a note's ⋯ menu (or right-click it in the list). The first time, you pick a password; one password covers all your locked notes.
+
+- A locked note's text is encrypted with XChaCha20-Poly1305. The key that encrypts it is itself protected by your password through Argon2id, which makes guessing passwords slow. Neither your password nor the key is ever saved unencrypted.
+- Locked notes stay open until you click the open padlock (**Lock Now**), after a period without using TuxNotes (**Settings → General**, 10 minutes by default), or when TuxNotes closes.
+- Backups contain locked notes still encrypted, so they need the same password after a restore.
+- **There is no way to recover a forgotten password.** You can add a hint.
+
+What locking doesn't hide: the note's **title** (its first line) stays visible in the list and in search, and **images and files** in a locked note are stored unencrypted. Backups made *before* you locked a note still contain it unlocked.
 
 ## Google Drive backup
 
@@ -138,7 +150,7 @@ Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-taur
 
 - [x] v0.1: folders, notes, rich text, checklists, search, pinning, Recently Deleted
 - [x] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
-- [ ] v0.3: tables ✅, images and attachments ✅, Markdown and PDF export ✅, encrypted backups
+- [ ] v0.3: tables ✅, images and attachments ✅, Markdown and PDF export ✅, subfolders ✅, locked notes ✅, encrypted backups
 - [ ] Flathub release
 
 ## License

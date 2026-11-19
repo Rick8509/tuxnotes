@@ -24,17 +24,29 @@ export interface NoteSummary {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /** Password-locked: only the title is visible until locked notes are unlocked. */
+  isLocked: boolean;
 }
 
 export interface Note {
   id: string;
   folderId: string;
   title: string;
-  content: DocJSON;
+  /** null for a locked note while locked notes are locked. */
+  content: DocJSON | null;
   isPinned: boolean;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  isLocked: boolean;
+}
+
+/** Mirrors `LockStatus` in crates/tuxnotes-core/src/lock.rs. */
+export interface LockStatus {
+  passwordSet: boolean;
+  unlocked: boolean;
+  hint: string;
+  lockedNotes: number;
 }
 
 export type NoteFilter =

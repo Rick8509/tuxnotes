@@ -1,9 +1,9 @@
 // Central UI state. Components read these fields directly; all mutations go
 // through methods so autosave, list ordering and counts stay consistent.
 
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { prefs, type SortBy } from "./prefs.svelte";
-import type { DocJSON, Folder, Note, NoteFilter, NoteSummary } from "../types";
+import type { DocJSON, Folder, LockStatus, Note, NoteFilter, NoteSummary } from "../types";
 import { sameFilter } from "../types";
 import { descendantIds } from "../folders";
 
@@ -17,6 +17,13 @@ export interface ToastAction {
 }
 
 export type SettingsSection = "general" | "appearance" | "backup" | "shortcuts" | "about";
+
+/** The password window: set the first password, unlock, or change it. */
+export type LockPromptMode = "set" | "unlock" | "change";
+export interface LockPrompt {
+  mode: LockPromptMode;
+  resolve: (ok: boolean) => void;
+}
 
 export interface ConfirmRequest {
   title: string;
@@ -65,6 +72,9 @@ class AppState {
   /** Section shown in the Settings window, or null when it's closed. */
   settingsSection = $state<SettingsSection | null>(null);
   confirmRequest = $state<ConfirmRequest | null>(null);
+  /** Locked notes: is a password set, are they unlocked right now. */
+  lock = $state<LockStatus>({ passwordSet: false, unlocked: false, hint: "", lockedNotes: 0 });
+  lockPrompt = $state<LockPrompt | null>(null);
   /** Bumped when the editor should take keyboard focus (e.g. after "New Note"). */
   focusEditorTick = $state(0);
   /** Bumped when the search field should take focus (Ctrl+Shift+F, or Ctrl+F outside the editor). */
@@ -117,7 +127,7 @@ class AppState {
   // ------------------------------------------------------------ plumbing
 
   showError(err: unknown) {
-    this.setToast("error", err instanceof Error ? err.message : String(err), 8000);
+    this.setToast("error", errorText(err), 8000);
     console.error(err);
   }
 
@@ -175,6 +185,7 @@ class AppState {
         folderId: updated.folderId,
         updatedAt: updated.updatedAt,
         deletedAt: updated.deletedAt,
+        isLocked: updated.isLocked,
       };
     }
   }
@@ -200,6 +211,7 @@ class AppState {
   // ------------------------------------------------------------ lifecycle
 
   async init() {
+    await this.refreshLock();
     await this.refreshCounts();
     await this.loadNotes();
     await this.selectNote(this.notes[0]?.id ?? null);
@@ -350,6 +362,88 @@ class AppState {
     await this.refreshCounts();
   }
 
+  // ---------------------------------------------------------- locked notes
+
+  async refreshLock() {
+    const status = await this.guard(() => api.lockStatus());
+    if (status) this.lock = status;
+  }
+
+  /** Open the password window; resolves true once it succeeded. */
+  askLockPassword(mode: LockPromptMode): Promise<boolean> {
+    this.lockPrompt?.resolve(false);
+    return new Promise((resolve) => {
+      this.lockPrompt = {
+        mode,
+        resolve: (ok) => {
+          this.lockPrompt = null;
+          resolve(ok);
+        },
+      };
+    });
+  }
+
+  /** Make sure locked notes are unlocked, asking for the password (or for a new one). */
+  private async ensureUnlocked(): Promise<boolean> {
+    await this.refreshLock();
+    if (this.lock.unlocked) return true;
+    return this.askLockPassword(this.lock.passwordSet ? "unlock" : "set");
+  }
+
+  /** Re-read the open note, e.g. after locking or unlocking. */
+  private async reloadCurrent() {
+    const id = this.current?.id;
+    if (!id) return;
+    const note = await this.guard(() => api.getNote(id));
+    if (note && this.current?.id === id) this.current = note;
+  }
+
+  async lockNote(id: string) {
+    await this.flush();
+    if (!(await this.ensureUnlocked())) return;
+    const summary = await this.guard(() => api.lockNote(id));
+    if (!summary) return;
+    this.replaceSummary(summary);
+    await this.refreshLock();
+    this.showInfo("Note locked. It stays open until you choose Lock Now or close TuxNotes.");
+  }
+
+  async removeLock(id: string) {
+    await this.flush();
+    if (!(await this.ensureUnlocked())) return;
+    const summary = await this.guard(() => api.removeNoteLock(id));
+    if (!summary) return;
+    this.replaceSummary(summary);
+    await this.reloadCurrent();
+    await this.refreshLock();
+  }
+
+  /** Unlock with a password typed on the lock screen. Returns an error message, or null. */
+  async unlockNotes(password: string): Promise<string | null> {
+    try {
+      this.lock = await api.unlockNotes(password);
+    } catch (e) {
+      return errorText(e);
+    }
+    await this.reloadCurrent();
+    return null;
+  }
+
+  /** Hide all locked notes again. */
+  async lockNow() {
+    if (!this.lock.unlocked) return;
+    await this.flush();
+    const status = await this.guard(() => api.lockNotes());
+    if (status) this.lock = status;
+    await this.reloadCurrent();
+  }
+
+  /** Called after the password window changed the status (set, unlock, change). */
+  async lockStatusChanged(status: LockStatus) {
+    this.lock = status;
+    await this.reloadCurrent();
+  }
+
   async togglePin(id: string) {
     await this.flush();
     const note = this.visibleNotes.find((n) => n.id === id);
@@ -393,6 +487,10 @@ class AppState {
   }
 
   async duplicateNote(id: string) {
+    if (this.notes.find((n) => n.id === id)?.isLocked || (this.current?.id === id && this.current.isLocked)) {
+      this.showInfo("Locked notes can't be duplicated. Remove the lock first.");
+      return;
+    }
     await this.flush();
     const copy = await this.guard(() => api.duplicateNote(id));
     if (!copy) return;

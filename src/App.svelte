@@ -6,6 +6,8 @@
   import { ui } from "./lib/stores/ui.svelte";
   import { printNote } from "./lib/importExport";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import LockDialog from "./lib/components/LockDialog.svelte";
+  import { prefs } from "./lib/stores/prefs.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import NoteList from "./lib/components/NoteList.svelte";
   import NoteInfoDialog from "./lib/components/NoteInfoDialog.svelte";
@@ -36,6 +38,20 @@
       }).then((fn) => cleanups.push(fn));
     }
 
+    // Lock locked notes again after a while without using TuxNotes (Settings → General).
+    let lastActivity = Date.now();
+    const onActivity = () => (lastActivity = Date.now());
+    const activityEvents = ["keydown", "pointerdown", "pointermove", "wheel"] as const;
+    for (const ev of activityEvents) window.addEventListener(ev, onActivity, { passive: true, capture: true });
+    const lockTimer = setInterval(() => {
+      const minutes = prefs.autoLockMinutes;
+      if (app.lock.unlocked && minutes > 0 && Date.now() - lastActivity >= minutes * 60_000) void app.lockNow();
+    }, 15_000);
+    cleanups.push(() => {
+      clearInterval(lockTimer);
+      for (const ev of activityEvents) window.removeEventListener(ev, onActivity, { capture: true });
+    });
+
     const onHide = () => {
       if (document.visibilityState === "hidden") void app.flush();
     };
@@ -55,7 +71,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (app.confirmRequest || app.settingsSection || app.showNoteInfo) return;
+    if (app.confirmRequest || app.settingsSection || app.showNoteInfo || app.lockPrompt) return;
 
     if (e.key === "F11") {
       e.preventDefault();
@@ -149,6 +165,9 @@
     <NoteInfoDialog />
   {/if}
   <ConfirmDialog />
+  {#if app.lockPrompt}
+    <LockDialog prompt={app.lockPrompt} />
+  {/if}
 
   {#if app.toast}
     <div class="toast" class:info={app.toast.kind === "info"} role={app.toast.kind === "error" ? "alert" : "status"}>

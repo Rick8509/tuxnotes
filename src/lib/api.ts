@@ -13,6 +13,7 @@ import type {
   BackupStatus,
   DocJSON,
   Folder,
+  LockStatus,
   MarkdownFile,
   Note,
   NoteFilter,
@@ -25,6 +26,9 @@ export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 let invokeImpl: Invoke | null = isTauri ? tauriInvoke : null;
+
+/** The message of an error from the backend (or anything else thrown), for showing to the user. */
+export const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!invokeImpl) {
@@ -54,6 +58,16 @@ export const api = {
   setNotePinned: (id: string, pinned: boolean) =>
     call<NoteSummary>("set_note_pinned", { id, pinned }),
   duplicateNote: (id: string) => call<Note>("duplicate_note", { id }),
+
+  // Locked notes
+  lockStatus: () => call<LockStatus>("lock_status"),
+  setLockPassword: (password: string, hint: string) => call<LockStatus>("set_lock_password", { password, hint }),
+  changeLockPassword: (oldPassword: string, newPassword: string, hint: string) =>
+    call<LockStatus>("change_lock_password", { oldPassword, newPassword, hint }),
+  unlockNotes: (password: string) => call<LockStatus>("unlock_notes", { password }),
+  lockNotes: () => call<LockStatus>("lock_notes"),
+  lockNote: (id: string) => call<NoteSummary>("lock_note", { id }),
+  removeNoteLock: (id: string) => call<NoteSummary>("remove_note_lock", { id }),
   moveNote: (id: string, folderId: string) => call<NoteSummary>("move_note", { id, folderId }),
   trashNote: (id: string) => call<NoteSummary>("trash_note", { id }),
   restoreNote: (id: string) => call<NoteSummary>("restore_note", { id }),

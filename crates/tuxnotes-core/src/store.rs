@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::crypto::SecretKey;
 use crate::error::{Error, Result};
 use crate::migrations;
 use crate::models::{Folder, Note, NoteFilter, NoteSummary};
@@ -29,15 +30,17 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const FOLDER_COLUMNS: &str = "f.id, f.name, f.is_default, f.sort_order, f.created_at, f.updated_at,
      (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id AND n.deleted_at IS NULL), f.parent_id";
 const SUMMARY_COLUMNS: &str =
-    "id, folder_id, title, snippet, is_pinned, created_at, updated_at, deleted_at";
-const NOTE_COLUMNS: &str =
-    "id, folder_id, title, content_json, is_pinned, created_at, updated_at, deleted_at";
+    "id, folder_id, title, snippet, is_pinned, created_at, updated_at, deleted_at,
+     (locked_blob IS NOT NULL)";
+const NOTE_COLUMNS: &str = "id, folder_id, title, content_json, is_pinned, created_at, updated_at, deleted_at, locked_blob";
 
 pub struct Store {
     pub(crate) conn: Connection,
     /// Last timestamp handed out; guarantees strictly increasing timestamps
     /// so "most recently edited" ordering is stable even within one millisecond.
     last_ts: Cell<i64>,
+    /// The key for locked notes while they're unlocked (memory only; see `lock.rs`).
+    pub(crate) notes_key: Option<SecretKey>,
 }
 
 impl Store {
@@ -56,11 +59,15 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // Overwrite deleted data with zeros, so text from a note that was locked
+        // doesn't linger in free pages of the file.
+        conn.pragma_update(None, "secure_delete", "ON")?;
         migrations::migrate(&mut conn)?;
 
         let store = Store {
             conn,
             last_ts: Cell::new(0),
+            notes_key: None,
         };
         store.ensure_default_folder()?;
         Ok(store)
@@ -75,6 +82,12 @@ impl Store {
         let ts = wall.max(self.last_ts.get() + 1);
         self.last_ts.set(ts);
         ts
+    }
+
+    #[doc(hidden)]
+    /// Raw database access for tests that check what is actually stored.
+    pub fn conn_for_tests(&self) -> &Connection {
+        &self.conn
     }
 
     fn new_id() -> String {
@@ -357,13 +370,16 @@ impl Store {
         self.get_note(&id)
     }
 
+    /// A note with its document. For a locked note the document is decrypted when
+    /// locked notes are unlocked, and `null` otherwise.
     pub fn get_note(&self, id: &str) -> Result<Note> {
-        self.conn
+        let (mut note, json, blob) = self
+            .conn
             .query_row(
                 &format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id = ?1"),
                 [id],
                 |row| {
-                    let json: String = row.get(3)?;
+                    let blob: Option<Vec<u8>> = row.get(8)?;
                     Ok((
                         Note {
                             id: row.get(0)?,
@@ -374,17 +390,23 @@ impl Store {
                             created_at: row.get(5)?,
                             updated_at: row.get(6)?,
                             deleted_at: row.get(7)?,
+                            is_locked: blob.is_some(),
                         },
-                        json,
+                        row.get::<_, String>(3)?,
+                        blob,
                     ))
                 },
             )
             .optional()?
-            .ok_or_else(|| Error::not_found("note", id))
-            .and_then(|(mut note, json)| {
-                note.content = serde_json::from_str(&json)?;
-                Ok(note)
-            })
+            .ok_or_else(|| Error::not_found("note", id))?;
+        note.content = match blob {
+            None => serde_json::from_str(&json)?,
+            Some(blob) => match &self.notes_key {
+                Some(key) => self.decrypt_note(key, id, &blob)?,
+                None => Value::Null,
+            },
+        };
+        Ok(note)
     }
 
     pub fn get_note_summary(&self, id: &str) -> Result<NoteSummary> {
@@ -409,6 +431,11 @@ impl Store {
             return Err(Error::invalid("This note is too large to save."));
         }
         self.require_active(id)?;
+        if self.is_locked(id)? {
+            let key = self.require_notes_key()?;
+            self.write_locked(key, id, content, true)?;
+            return self.get_note_summary(id);
+        }
 
         let extracted = text::extract(content);
         self.conn.execute(
@@ -431,6 +458,11 @@ impl Store {
     /// which is safe: they're only removed once no note refers to them.
     pub fn duplicate_note(&self, id: &str) -> Result<Note> {
         self.require_active(id)?;
+        if self.is_locked(id)? {
+            return Err(Error::invalid(
+                "Locked notes can't be duplicated. Remove the lock first.",
+            ));
+        }
         let original = self.get_note(id)?;
         let copy = self.create_note(Some(&original.folder_id))?;
         self.update_note_content(&copy.id, &original.content)?;
@@ -493,10 +525,11 @@ impl Store {
     /// Delete a note that was created but never given any content (like Apple Notes
     /// does when you leave an empty new note). Returns whether it was deleted.
     pub fn discard_note_if_blank(&self, id: &str) -> Result<bool> {
+        // Locked notes are never blank (their visible document is just empty).
         let row: Option<(String, Option<i64>)> = self
             .conn
             .query_row(
-                "SELECT content_json, deleted_at FROM notes WHERE id = ?1",
+                "SELECT content_json, deleted_at FROM notes WHERE id = ?1 AND locked_blob IS NULL",
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -516,7 +549,10 @@ impl Store {
     pub fn discard_blank_notes(&self) -> Result<usize> {
         let ids: Vec<String> = self
             .conn
-            .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND content_text = ''")?
+            .prepare(
+                "SELECT id FROM notes
+                 WHERE deleted_at IS NULL AND content_text = '' AND locked_blob IS NULL",
+            )?
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let mut removed = 0;
@@ -594,7 +630,7 @@ impl Store {
         };
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.folder_id, n.title, n.snippet, n.is_pinned,
-                    n.created_at, n.updated_at, n.deleted_at
+                    n.created_at, n.updated_at, n.deleted_at, (n.locked_blob IS NOT NULL)
              FROM notes_fts
              JOIN notes n ON n.seq = notes_fts.rowid
              WHERE notes_fts MATCH ?1 AND n.deleted_at IS NULL
@@ -607,7 +643,7 @@ impl Store {
         Ok(rows)
     }
 
-    fn require_active(&self, id: &str) -> Result<()> {
+    pub(crate) fn require_active(&self, id: &str) -> Result<()> {
         if self.get_note_summary(id)?.deleted_at.is_some() {
             return Err(Error::invalid(
                 "This note is in Recently Deleted. Restore it to make changes.",
@@ -696,6 +732,7 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<NoteSummary> {
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
         deleted_at: row.get(7)?,
+        is_locked: row.get(8)?,
     })
 }
 

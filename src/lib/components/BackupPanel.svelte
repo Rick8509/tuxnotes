@@ -18,7 +18,7 @@
     LoaderCircle,
     Lock,
   } from "@lucide/svelte";
-  import { api, isTauri } from "../api";
+  import { api, errorText, isTauri } from "../api";
   import { formatBytes, formatRelativeDateTime } from "../format";
   import { app } from "../stores/app.svelte";
   import type { AutoBackup, BackupInfo, BackupStatus } from "../types";
@@ -38,7 +38,7 @@
   let selectedId = $state<string | null>(null);
 
   const available = $derived(!!status && status.clientSource !== "none");
-  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  const message = errorText;
   const details = (b: BackupInfo) =>
     [b.noteCount != null && `${b.noteCount} note${b.noteCount === 1 ? "" : "s"}`, b.size != null && formatBytes(b.size)]
       .filter(Boolean)

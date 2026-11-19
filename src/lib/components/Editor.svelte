@@ -4,7 +4,8 @@
   import { Placeholder } from "@tiptap/extensions";
   import { EditorState, NodeSelection } from "@tiptap/pm/state";
   import type { EditorView } from "@tiptap/pm/view";
-  import { ChevronDown, ChevronUp, Ellipsis, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, Ellipsis, LockOpen, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
+  import LockedNote from "./LockedNote.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { api, isTauri } from "../api";
   import { NOTE_DRAG_TYPE } from "../dnd";
@@ -38,7 +39,10 @@
   let unsupported = $state(false);
   let version = $state(0);
   /** Id of the note currently loaded into the editor. */
+  /** The note whose edits are saved (null while a locked note is hidden). */
   let loadedId: string | null = null;
+  /** Note id + whether its content was hidden when loaded: unlocking reloads it. */
+  let loadedKey: string | null = null;
 
   // Apple-Notes-like extra shortcuts.
   const Shortcuts = Extension.create({
@@ -379,17 +383,25 @@
   /** "⋯" button: export, print and import. */
   function openMoreMenu(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const hasNote = !!app.current;
+    const cur = app.current;
+    // A locked note that's hidden has nothing to show, export or copy.
+    const visible = !!cur && cur.content !== null;
+    const active = !!cur && !cur.deletedAt;
     tableMenu = {
       x: r.right - 230,
       y: r.bottom + 4,
       items: [
-        { label: "Duplicate Note", action: () => app.current && app.duplicateNote(app.current.id), disabled: !hasNote || !!app.current?.deletedAt },
-        { label: "Note Info…", action: () => app.flush().then(() => (app.showNoteInfo = true)), disabled: !hasNote },
+        cur?.isLocked
+          ? { label: "Remove Lock", action: () => app.removeLock(cur.id), disabled: !active }
+          : { label: "Lock Note…", action: () => cur && app.lockNote(cur.id), disabled: !active },
+        ...(app.lock.unlocked ? [{ label: "Lock Now", action: () => app.lockNow() }] : []),
         { kind: "separator" },
-        { label: "Export as Markdown…", action: exportMarkdown, disabled: !hasNote },
-        { label: "Export as PDF…", action: exportPdf, disabled: !hasNote },
-        { label: "Print…", action: printNote, disabled: !hasNote },
+        { label: "Duplicate Note", action: () => cur && app.duplicateNote(cur.id), disabled: !active || !!cur?.isLocked },
+        { label: "Note Info…", action: () => app.flush().then(() => (app.showNoteInfo = true)), disabled: !visible },
+        { kind: "separator" },
+        { label: "Export as Markdown…", action: exportMarkdown, disabled: !visible },
+        { label: "Export as PDF…", action: exportPdf, disabled: !visible },
+        { label: "Print…", action: printNote, disabled: !visible },
         { kind: "separator" },
         { label: "Import Markdown Files…", action: importMarkdown },
       ],
@@ -463,10 +475,12 @@
   });
 
   function loadNote(ed: Editor, note: typeof app.current) {
-    const id = note?.id ?? null;
-    if (id !== loadedId) {
-      loadedId = id;
-      const json = note ? $state.snapshot(note.content) : { type: "doc", content: [{ type: "paragraph" }] };
+    const hiddenNow = !!note && note.content === null;
+    const key = note ? `${note.id}${hiddenNow ? ":hidden" : ""}` : null;
+    if (key !== loadedKey) {
+      loadedKey = key;
+      loadedId = note && !hiddenNow ? note.id : null;
+      const json = note?.content ? $state.snapshot(note.content) : { type: "doc", content: [{ type: "paragraph" }] };
       let doc;
       unsupported = false;
       tableMenu = null;
@@ -491,7 +505,7 @@
       else applySearchHighlight(ed, true);
       version++;
     }
-    const editable = !!note && !note.deletedAt && !unsupported;
+    const editable = !!note && !note.deletedAt && !unsupported && !hiddenNow;
     if (ed.isEditable !== editable) ed.setEditable(editable, false);
   }
 
@@ -501,7 +515,9 @@
   });
 
   const note = $derived(app.current);
-  const readOnly = $derived(!note || !!note.deletedAt || unsupported);
+  /** A locked note whose content is hidden until the password is entered. */
+  const hidden = $derived(!!note && note.content === null);
+  const readOnly = $derived(!note || !!note.deletedAt || unsupported || hidden);
 </script>
 
 <main class="editor-pane">
@@ -522,6 +538,11 @@
     <button class="icon-btn" title="Export, print or import" aria-label="More actions" onclick={openMoreMenu}>
       <Ellipsis size={17} />
     </button>
+    {#if note?.isLocked && !hidden}
+      <button class="icon-btn lock-now" title="Lock Now: hide all locked notes" aria-label="Lock Now" onclick={() => app.lockNow()}>
+        <LockOpen size={17} />
+      </button>
+    {/if}
     {#if note && !note.deletedAt}
       <button
         class="icon-btn"
@@ -545,7 +566,7 @@
     <WindowControls />
   </header>
 
-  {#if findOpen && note}
+  {#if findOpen && note && !hidden}
     <div class="find-bar" role="search">
       <Search size={14} />
       <input
@@ -585,7 +606,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="scroll first-{prefs.firstLine}"
-    class:hidden={!note}
+    class:hidden={!note || hidden}
     style:--editor-font-size="{TEXT_SIZE_PX[prefs.textSize]}px"
     bind:this={scroller}
     onclick={onScrollerClick}
@@ -611,6 +632,10 @@
     {/if}
   </div>
 
+  {#if hidden}
+    <LockedNote />
+  {/if}
+
   {#if !note}
     <div class="empty">
       <p>No note selected</p>
@@ -626,6 +651,9 @@
 {/if}
 
 <style>
+  .lock-now {
+    color: var(--accent-strong);
+  }
   .editor-pane {
     grid-column: 3;
     position: relative;

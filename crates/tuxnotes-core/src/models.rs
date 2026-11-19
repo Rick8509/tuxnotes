@@ -30,6 +30,8 @@ pub struct NoteSummary {
     pub updated_at: i64,
     /// Set when the note is in "Recently Deleted".
     pub deleted_at: Option<i64>,
+    /// The note is password-locked (its body is encrypted; only the title is visible).
+    pub is_locked: bool,
 }
 
 /// A full note including its rich-text document (TipTap/ProseMirror JSON).
@@ -39,11 +41,13 @@ pub struct Note {
     pub id: String,
     pub folder_id: String,
     pub title: String,
+    /// The document, or `null` for a locked note while locked notes are locked.
     pub content: Value,
     pub is_pinned: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+    pub is_locked: bool,
 }
 
 /// Which notes to show in the note list.

@@ -5,7 +5,7 @@ use std::sync::MutexGuard;
 
 use serde_json::Value;
 use tauri::State;
-use tuxnotes_core::{Error, Folder, Note, NoteFilter, NoteSummary, Result, Store};
+use tuxnotes_core::{Error, Folder, LockStatus, Note, NoteFilter, NoteSummary, Result, Store};
 
 use crate::AppState;
 
@@ -217,4 +217,60 @@ pub fn app_info(app: tauri::AppHandle) -> std::result::Result<AppInfo, String> {
         data_dir: data_dir.display().to_string(),
         config_dir: config_dir.display().to_string(),
     })
+}
+
+// ------------------------------------------------------------ locked notes
+// Password checks take a noticeable fraction of a second (on purpose), so these
+// run off the main thread: `async` keeps the window responsive meanwhile.
+
+#[tauri::command]
+pub fn lock_status(state: State<'_, AppState>) -> Result<LockStatus> {
+    store(&state)?.lock_status()
+}
+
+#[tauri::command(async)]
+pub fn set_lock_password(
+    state: State<'_, AppState>,
+    password: String,
+    hint: String,
+) -> Result<LockStatus> {
+    let mut store = store(&state)?;
+    store.set_lock_password(&password, &hint)?;
+    store.lock_status()
+}
+
+#[tauri::command(async)]
+pub fn change_lock_password(
+    state: State<'_, AppState>,
+    old_password: String,
+    new_password: String,
+    hint: String,
+) -> Result<LockStatus> {
+    let mut store = store(&state)?;
+    store.change_lock_password(&old_password, &new_password, &hint)?;
+    store.lock_status()
+}
+
+#[tauri::command(async)]
+pub fn unlock_notes(state: State<'_, AppState>, password: String) -> Result<LockStatus> {
+    let mut store = store(&state)?;
+    store.unlock_notes(&password)?;
+    store.lock_status()
+}
+
+#[tauri::command]
+pub fn lock_notes(state: State<'_, AppState>) -> Result<LockStatus> {
+    let mut store = store(&state)?;
+    store.lock_notes();
+    store.lock_status()
+}
+
+#[tauri::command]
+pub fn lock_note(state: State<'_, AppState>, id: String) -> Result<NoteSummary> {
+    store(&state)?.lock_note(&id)
+}
+
+#[tauri::command]
+pub fn remove_note_lock(state: State<'_, AppState>, id: String) -> Result<NoteSummary> {
+    store(&state)?.remove_note_lock(&id)
 }

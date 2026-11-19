@@ -5,7 +5,7 @@
   import { Cloud, Info, Keyboard, Palette, SlidersHorizontal, X } from "@lucide/svelte";
   import { api, isTauri } from "../api";
   import { app, type SettingsSection } from "../stores/app.svelte";
-  import { prefs, type FirstLine, type SortBy, type TextSize, type Theme } from "../stores/prefs.svelte";
+  import { AUTO_LOCK_CHOICES, prefs, type AutoLock, type FirstLine, type SortBy, type TextSize, type Theme } from "../stores/prefs.svelte";
   import type { AppInfo } from "../types";
   import BackupPanel, { type BackupView } from "./BackupPanel.svelte";
 
@@ -41,7 +41,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key !== "Escape" || app.confirmRequest) return;
+    if (e.key !== "Escape" || app.confirmRequest || app.lockPrompt) return;
     e.preventDefault();
     if (section === "backup" && backupView === "restore") backupView = "home";
     else close();
@@ -82,6 +82,8 @@
     { id: "large", label: "Large" },
     { id: "xlarge", label: "Extra Large" },
   ];
+  const autoLockLabel = (m: AutoLock) => (m === 0 ? "Only when TuxNotes closes" : m === 60 ? "After 1 hour" : `After ${m} minutes`);
+
   const firstLines: { id: FirstLine; label: string }[] = [
     { id: "title", label: "Title" },
     { id: "heading", label: "Heading" },
@@ -218,6 +220,40 @@
           </div>
         </div>
         <p class="footnote">Notes in Recently Deleted are removed permanently after 30 days.</p>
+
+        <h3 class="subhead">Locked Notes</h3>
+        <div class="group">
+          <div class="row">
+            <div class="label">
+              <span>Password</span>
+              <span class="hint">
+                {#if app.lock.passwordSet}
+                  {app.lock.lockedNotes} locked note{app.lock.lockedNotes === 1 ? "" : "s"}. A forgotten password can't be recovered.
+                {:else}
+                  Not set yet. Choose Lock Note… in a note's ⋯ menu to set one.
+                {/if}
+              </span>
+            </div>
+            {#if app.lock.passwordSet}
+              <button class="btn" onclick={() => app.askLockPassword("change")}>Change Password…</button>
+            {/if}
+          </div>
+          <div class="row">
+            <div class="label">
+              <span>Lock locked notes again</span>
+              <span class="hint">When TuxNotes hasn't been used for a while. They always lock when it closes.</span>
+            </div>
+            <select
+              value={String(prefs.autoLockMinutes)}
+              aria-label="Lock locked notes again"
+              onchange={(e) => prefs.set("autoLockMinutes", Number(e.currentTarget.value) as AutoLock)}
+            >
+              {#each AUTO_LOCK_CHOICES as m (m)}
+                <option value={String(m)}>{autoLockLabel(m)}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
 
       {:else if section === "appearance"}
         <h2>Appearance</h2>
@@ -407,6 +443,11 @@
   .hint {
     font-size: 12px;
     color: var(--text-secondary);
+  }
+  .subhead {
+    margin: 22px 0 8px;
+    font-size: 13px;
+    font-weight: 700;
   }
   .footnote {
     margin: 12px 2px 0;
@@ -618,11 +659,13 @@
     margin-top: 14px;
   }
   .btn {
+    flex: none;
     height: 32px;
     padding: 0 14px;
     border-radius: var(--radius-md);
     background: var(--bg-input);
     font-weight: 600;
+    white-space: nowrap;
   }
   .btn:hover:not(:disabled) {
     background: var(--bg-active);

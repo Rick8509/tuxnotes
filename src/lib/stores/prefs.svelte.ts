@@ -7,6 +7,9 @@ export type Theme = "system" | "light" | "dark";
 export type TextSize = "small" | "medium" | "large" | "xlarge";
 export type SortBy = "edited" | "created" | "title";
 export type FirstLine = "title" | "heading" | "body";
+/** Lock locked notes again after this many idle minutes (0 = only when TuxNotes closes). */
+export type AutoLock = 0 | 5 | 10 | 30 | 60;
+export const AUTO_LOCK_CHOICES: readonly AutoLock[] = [5, 10, 30, 60, 0];
 
 /** Editor body font size in px for each text size. Headings scale with it. */
 export const TEXT_SIZE_PX: Record<TextSize, number> = { small: 13, medium: 15, large: 17, xlarge: 20 };
@@ -19,6 +22,7 @@ interface Persisted {
   firstLine: FirstLine;
   /** Ticked checklist items move to the bottom of their list. */
   sortChecked: boolean;
+  autoLockMinutes: AutoLock;
 }
 
 const DEFAULTS: Persisted = {
@@ -28,6 +32,7 @@ const DEFAULTS: Persisted = {
   groupByDate: true,
   firstLine: "title",
   sortChecked: true,
+  autoLockMinutes: 10,
 };
 
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
@@ -45,6 +50,9 @@ function load(): Persisted {
       groupByDate: typeof p.groupByDate === "boolean" ? p.groupByDate : DEFAULTS.groupByDate,
       firstLine: pick(p.firstLine, ["title", "heading", "body"], DEFAULTS.firstLine),
       sortChecked: typeof p.sortChecked === "boolean" ? p.sortChecked : DEFAULTS.sortChecked,
+      autoLockMinutes: AUTO_LOCK_CHOICES.includes(p.autoLockMinutes as AutoLock)
+        ? (p.autoLockMinutes as AutoLock)
+        : DEFAULTS.autoLockMinutes,
     };
   } catch {
     return { ...DEFAULTS };
@@ -60,6 +68,7 @@ class Prefs {
   groupByDate = $state(DEFAULTS.groupByDate);
   firstLine = $state<FirstLine>(DEFAULTS.firstLine);
   sortChecked = $state(DEFAULTS.sortChecked);
+  autoLockMinutes = $state<AutoLock>(DEFAULTS.autoLockMinutes);
   /** Follows the desktop's dark-mode setting live. */
   systemDark = $state(darkQuery?.matches ?? false);
 
@@ -92,6 +101,7 @@ class Prefs {
       groupByDate: this.groupByDate,
       firstLine: this.firstLine,
       sortChecked: this.sortChecked,
+      autoLockMinutes: this.autoLockMinutes,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(p));

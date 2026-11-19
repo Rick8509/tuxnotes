@@ -18,7 +18,7 @@ const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 export async function exportMarkdown() {
   try {
     const note = await savedCurrent();
-    if (!note) return;
+    if (!note?.content) return; // nothing to export (or locked)
     const path = await api.exportMarkdown(note.title || "Note", noteToMarkdown(note.content));
     if (path) app.showInfo(`Exported “${fileName(path)}”`);
   } catch (e) {
@@ -29,7 +29,7 @@ export async function exportMarkdown() {
 export async function exportPdf() {
   try {
     const note = await savedCurrent();
-    if (!note) return;
+    if (!note?.content) return; // nothing to export (or locked)
     const path = await api.exportPdf(note.title || "Note");
     if (path) app.showInfo(`Saved “${fileName(path)}”`);
   } catch (e) {
@@ -38,6 +38,7 @@ export async function exportPdf() {
 }
 
 export async function printNote() {
+  if (!app.current?.content) return; // a hidden locked note: nothing to print
   try {
     await app.flush();
     await api.printNote();

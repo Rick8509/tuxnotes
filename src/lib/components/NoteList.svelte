@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder as FolderIcon, PanelLeftOpen, Search, SquarePen, X } from "@lucide/svelte";
+  import { Folder as FolderIcon, LockKeyhole, PanelLeftOpen, Search, SquarePen, X } from "@lucide/svelte";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { formatListDate, groupByDate, purgeLabel } from "../format";
   import { visibleRows } from "../folders";
@@ -111,7 +111,10 @@
         ]
       : [
           { label: note.isPinned ? "Unpin Note" : "Pin Note", action: () => app.togglePin(note.id) },
-          { label: "Duplicate", action: () => app.duplicateNote(note.id) },
+          note.isLocked
+            ? { label: "Remove Lock", action: () => app.removeLock(note.id) }
+            : { label: "Lock Note…", action: () => app.lockNote(note.id) },
+          { label: "Duplicate", action: () => app.duplicateNote(note.id), disabled: note.isLocked },
           { kind: "separator" },
           { kind: "heading", label: "Move to" },
           // All folders in tree order; subfolders indented under their parent.
@@ -142,12 +145,14 @@
     onclick={() => app.selectNote(note.id)}
     oncontextmenu={(e) => noteMenu(e, note)}
   >
-    <span class="title">{note.title || "New Note"}</span>
+    <span class="title">
+      {#if note.isLocked}<LockKeyhole size={12} class="lock" aria-label="Locked" />{/if}{note.title || "New Note"}
+    </span>
     <span class="meta">
       <span class="date">
         {note.deletedAt ? purgeLabel(note.deletedAt) : formatListDate(dateOf(note))}
       </span>
-      <span class="snippet">{note.snippet || "No additional text"}</span>
+      <span class="snippet">{note.isLocked ? "Locked" : note.snippet || "No additional text"}</span>
     </span>
     {#if showFolderName}
       <span class="folder"><FolderIcon size={12} />{app.folderName(note.folderId)}</span>
@@ -384,6 +389,11 @@
   .date {
     flex: none;
     font-weight: 500;
+  }
+  .title :global(.lock) {
+    margin-right: 4px;
+    vertical-align: -1px;
+    color: var(--text-secondary);
   }
   .snippet {
     color: var(--text-secondary);

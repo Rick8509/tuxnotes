@@ -317,12 +317,20 @@ impl Store {
 
     /// Ids referenced by any note, including notes in Recently Deleted.
     pub fn referenced_attachment_ids(&self) -> Result<HashSet<String>> {
-        let mut stmt = self.conn.prepare("SELECT content_json FROM notes")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content_json, locked_attachments FROM notes")?;
         let mut ids = HashSet::new();
-        for json in stmt.query_map([], |row| row.get::<_, String>(0))? {
-            if let Ok(doc) = serde_json::from_str::<Value>(&json?) {
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (json, locked) = row?;
+            if let Ok(doc) = serde_json::from_str::<Value>(&json) {
                 referenced_ids(&doc, &mut ids);
             }
+            // Locked notes' documents are encrypted; their attachment ids are kept beside them.
+            ids.extend(locked.split_whitespace().map(str::to_string));
         }
         Ok(ids)
     }

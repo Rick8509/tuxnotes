@@ -4,7 +4,7 @@
 
 import { extractText, isBlank } from "./text";
 import { registerPreviewUrl } from "./attachmentUrls";
-import type { AttachResult, Attachment, MarkdownFile, BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
+import type { AttachResult, Attachment, MarkdownFile, BackupInfo, BackupStatus, DocJSON, Folder, LockStatus, Note, NoteFilter, NoteSummary } from "./types";
 import { IMAGE_MIMES } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
@@ -17,7 +17,12 @@ interface MockNote extends Note {
 interface MockDb {
   folders: Omit<Folder, "noteCount">[];
   notes: MockNote[];
+  /** Locked-notes password (the mock keeps it in plain text; the real app never does). */
+  lock?: { password: string; hint: string };
 }
+
+/** Like the real app's in-memory key: forgotten on reload. */
+let mockUnlocked = false;
 
 let lastTs = 0;
 const now = () => (lastTs = Math.max(Date.now(), lastTs + 1));
@@ -59,12 +64,36 @@ function withCount(f: Omit<Folder, "noteCount">): Folder {
 
 function summary(n: MockNote): NoteSummary {
   const { id, folderId, title, snippet, isPinned, createdAt, updatedAt, deletedAt } = n;
-  return { id, folderId, title, snippet, isPinned, createdAt, updatedAt, deletedAt };
+  return { id, folderId, title, snippet, isPinned, createdAt, updatedAt, deletedAt, isLocked: !!n.isLocked };
 }
 
 function note(n: MockNote): Note {
   const { snippet: _s, plain: _p, ...rest } = n;
-  return structuredClone(rest);
+  const copy = structuredClone(rest);
+  copy.isLocked = !!n.isLocked;
+  if (copy.isLocked && !mockUnlocked) copy.content = null;
+  return copy;
+}
+
+function lockStatus(): LockStatus {
+  return {
+    passwordSet: !!db.lock,
+    unlocked: mockUnlocked,
+    hint: db.lock?.hint ?? "",
+    lockedNotes: db.notes.filter((n) => n.isLocked).length,
+  };
+}
+
+function checkNewPassword(password: string, hint: string): string {
+  if ([...password].length < 4) fail("Use a password of at least 4 characters.");
+  const h = hint.trim();
+  if (h && h.toLowerCase().includes(password.toLowerCase())) fail("The hint can't contain the password.");
+  return h;
+}
+
+function requireUnlocked() {
+  if (!db.lock) fail("Set a password for locked notes first.");
+  if (!mockUnlocked) fail("This note is locked. Enter the password to open it.");
 }
 
 function checkFolderName(name: string, parentId: string | null, existingId?: string): string {
@@ -181,6 +210,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
       createdAt: t,
       updatedAt: t,
       deletedAt: null,
+      isLocked: false,
     };
     db.notes.push(n);
     return note(n);
@@ -188,12 +218,52 @@ const handlers: Record<string, (a: Args) => unknown> = {
   update_note_content: ({ id, content }) => {
     if (content?.type !== "doc") fail("Note content must be a document.");
     const n = active(id);
+    if (n.isLocked) requireUnlocked();
     const text = extractText(content);
     Object.assign(n, { content: structuredClone(content), ...text, updatedAt: now() });
+    if (n.isLocked) Object.assign(n, { snippet: "", plain: "" });
+    return summary(n);
+  },
+  lock_status: () => lockStatus(),
+  set_lock_password: ({ password, hint }) => {
+    if (db.lock) fail("A password for locked notes is already set.");
+    db.lock = { password, hint: checkNewPassword(password, hint) };
+    mockUnlocked = true;
+    return lockStatus();
+  },
+  change_lock_password: ({ oldPassword, newPassword, hint }) => {
+    if (!db.lock) fail("No password has been set for locked notes.");
+    if (oldPassword !== db.lock!.password) fail("Wrong password.");
+    db.lock = { password: newPassword, hint: checkNewPassword(newPassword, hint) };
+    mockUnlocked = true;
+    return lockStatus();
+  },
+  unlock_notes: ({ password }) => {
+    if (!db.lock) fail("No password has been set for locked notes.");
+    if (password !== db.lock!.password) fail("Wrong password.");
+    mockUnlocked = true;
+    return lockStatus();
+  },
+  lock_notes: () => {
+    mockUnlocked = false;
+    return lockStatus();
+  },
+  lock_note: ({ id }) => {
+    const n = active(id);
+    requireUnlocked();
+    Object.assign(n, { isLocked: true, snippet: "", plain: "" });
+    return summary(n);
+  },
+  remove_note_lock: ({ id }) => {
+    const n = active(id);
+    if (!n.isLocked) return summary(n);
+    requireUnlocked();
+    Object.assign(n, { isLocked: false, ...extractText(n.content!) });
     return summary(n);
   },
   duplicate_note: ({ id }) => {
     const src = active(id);
+    if (src.isLocked) fail("Locked notes can't be duplicated. Remove the lock first.");
     const t = now();
     const copy: MockNote = { ...structuredClone(src), id: uid(), isPinned: false, createdAt: t, updatedAt: t, deletedAt: null };
     db.notes.push(copy);
@@ -235,7 +305,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
   trash_count: () => db.notes.filter((n) => n.deletedAt !== null).length,
   discard_note_if_blank: ({ id }) => {
     const n = db.notes.find((x) => x.id === id);
-    if (!n || n.deletedAt !== null || !isBlank(n.content)) return false;
+    if (!n || n.deletedAt !== null || n.isLocked || !isBlank(n.content!)) return false;
     db.notes = db.notes.filter((x) => x.id !== id);
     return true;
   },

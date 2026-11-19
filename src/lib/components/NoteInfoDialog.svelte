@@ -27,7 +27,7 @@
   type Walkable = { type?: string; attrs?: Record<string, unknown>; content?: Walkable[] };
 
   const stats = $derived.by(() => {
-    if (!note) return null;
+    if (!note?.content) return null;
     const plain = extractText(note.content).plain;
     const words = plain.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
     const characters = [...plain.replace(/\n/g, "")].length;

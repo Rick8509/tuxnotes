@@ -5,6 +5,7 @@ All notable changes to TuxNotes are listed here.
 ## Unreleased
 
 ### Added
+- **Password-locked notes.** ⋯ → **Lock Note…** (or right-click a note). One password for all locked notes, chosen the first time, with an optional hint. A locked note's body is encrypted (XChaCha20-Poly1305, with the key protected by the password through Argon2id); the list shows a padlock and "Locked", and only the title stays searchable. Locked notes stay open until **Lock Now** (the open padlock in the toolbar), after 5/10/30/60 idle minutes (**Settings → General**, default 10), or when TuxNotes closes. Change the password in **Settings → General**. Images and files in a locked note aren't encrypted, and forgotten passwords can't be recovered.
 - **Undo delete, duplicate and note info.** Deleting a note shows a message with **Undo** (or press Ctrl+Z in the note list) that brings it straight back. **Duplicate** (note context menu or ⋯ menu) copies a note into the same folder. **⋯ → Note Info…** shows word and character counts, checklist progress, attachments, the folder path, and created/modified dates.
 - **Subfolders.** Right-click a folder → **New Subfolder…** (up to 5 levels). Drag a folder onto the middle of another to nest it, onto its top or bottom edge to reorder, or onto the "Folders" label to move it back to the top level. Expand and collapse branches with the arrow (remembered). Folder names only need to be unique within the same parent. Deleting a folder deletes its subfolders too; all their notes go to Recently Deleted. The **Move to** menu shows the folder tree.
 - **Export and import** (the **⋯** button in the editor): **Export as Markdown…** saves the note as a `.md` file, copying its images and files into a "‹name› files" folder next to it; **Export as PDF…** saves a PDF directly (no print dialog), always in light colours and showing only the note; **Print…** (`Ctrl+P`); **Import Markdown Files…** turns Markdown files into notes in the current folder, including checklists, tables and images that sit next to the file. Images from the web become links (nothing is downloaded), and only images inside the imported file's folder are attached.
@@ -23,5 +24,5 @@ All notable changes to TuxNotes are listed here.
 
 ### Compatibility
 - Backups now use **format 2**, which includes attachments. Older backups (format 1) still restore normally.
-- Once this version has opened your notes, its database (schema 3) can't be opened by earlier TuxNotes builds. Update every computer you use.
+- Once this version has opened your notes, its database (schema 4) can't be opened by earlier TuxNotes builds. Update every computer you use.
 - Notes that contain **tables** can't be shown by TuxNotes builds from before table support. Update every computer you use before restoring a backup that contains tables.

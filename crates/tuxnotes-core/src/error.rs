@@ -25,6 +25,13 @@ pub enum Error {
     #[error("{0}")]
     InvalidBackup(String),
 
+    #[error("Wrong password.")]
+    WrongPassword,
+
+    /// Encryption or decryption failed (wrong key, damaged data, no randomness).
+    #[error("encryption error: {0}")]
+    Crypto(String),
+
     #[error(
         "this database was created by a newer version of TuxNotes \
          (schema {found}, this version supports up to {supported})"
