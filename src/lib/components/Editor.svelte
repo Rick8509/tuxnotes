@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Editor, Extension, getMarkRange } from "@tiptap/core";
   import StarterKit from "@tiptap/starter-kit";
   import { TaskItem, TaskList } from "@tiptap/extension-list";
@@ -7,12 +7,13 @@
   import { TableKit } from "@tiptap/extension-table";
   import { EditorState, NodeSelection } from "@tiptap/pm/state";
   import type { EditorView } from "@tiptap/pm/view";
-  import { Maximize2, Minimize2, Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { api, isTauri } from "../api";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { FileNode, ImageNode, nodeForAttachment } from "../editor/attachmentNodes";
   import { ChecklistSort, checklistActions } from "../editor/checklist";
+  import { SearchHighlight, getSearch, goToMatch, scrollToPos, setSearch } from "../editor/search";
   import { formatEditorDate } from "../format";
   import { displayUrl, isOpenableUrl } from "../links";
   import { tableMenuItems } from "../tableMenu";
@@ -67,6 +68,77 @@
     addKeyboardShortcuts() {
       return { Tab: () => this.editor.commands.insertContent("\t") };
     },
+  });
+
+  // ----------------------------------------------------- find & highlights
+
+  let findOpen = $state(false);
+  let findQuery = $state("");
+  let findInput = $state<HTMLInputElement>();
+  const findInfo = $derived.by(() => {
+    void version;
+    const s = editor ? getSearch(editor.state) : undefined;
+    return s && s.mode === "find" ? { count: s.matches.length, current: s.current } : { count: 0, current: -1 };
+  });
+
+  /** Words being searched across all notes, highlighted in the open note. */
+  const searchWords = () => (app.searchResults ? app.query.trim() : "");
+
+  function applySearchHighlight(ed: Editor, scroll: boolean) {
+    const words = searchWords();
+    setSearch(ed.view, words, "terms");
+    const first = getSearch(ed.state)?.matches[0];
+    if (words && scroll && first) scrollToPos(ed.view, first.from);
+  }
+
+  async function openFind() {
+    findOpen = true;
+    await tick();
+    findInput?.focus();
+    findInput?.select();
+    if (findQuery) runFind();
+  }
+
+  function runFind() {
+    const ed = editor;
+    if (!ed) return;
+    setSearch(ed.view, findQuery, "find", 0);
+    if (findQuery && getSearch(ed.state)?.matches.length) goToMatch(ed.view, 0);
+  }
+
+  function step(delta: number) {
+    const ed = editor;
+    if (ed && findInfo.count) goToMatch(ed.view, findInfo.current + delta);
+  }
+
+  function closeFind() {
+    findOpen = false;
+    const ed = editor;
+    if (!ed) return;
+    applySearchHighlight(ed, false); // back to search-word highlights (or none)
+    ed.commands.focus();
+  }
+
+  function onFindKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      step(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    }
+  }
+
+  $effect(() => {
+    if (app.findInNoteTick) untrack(() => void openFind());
+  });
+
+  // Search words changed while a note is open: update its highlights.
+  $effect(() => {
+    void app.query;
+    void app.searchResults;
+    const ed = editor;
+    if (ed) untrack(() => !findOpen && applySearchHighlight(ed, true));
   });
 
   // ------------------------------------------------------------------ links
@@ -322,6 +394,7 @@
         TaskItem.configure({ nested: true }),
         // Settings → General → "Move checked items to the bottom".
         ChecklistSort.configure({ enabled: () => prefs.sortChecked }),
+        SearchHighlight,
         Placeholder.configure({ placeholder: "Start writing…" }),
         // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
         TableKit.configure({ table: { resizable: true, cellMinWidth: 60 } }),
@@ -403,6 +476,9 @@
       }
       ed.view.updateState(EditorState.create({ doc, plugins: ed.state.plugins }));
       scroller.scrollTop = 0;
+      // A fresh state has no highlights: re-run the find bar or search-word highlights.
+      if (findOpen && findQuery) runFind();
+      else applySearchHighlight(ed, true);
       version++;
     }
     const editable = !!note && !note.deletedAt && !unsupported;
@@ -455,6 +531,31 @@
     </button>
     <WindowControls />
   </header>
+
+  {#if findOpen && note}
+    <div class="find-bar" role="search">
+      <Search size={14} />
+      <input
+        bind:this={findInput}
+        bind:value={findQuery}
+        oninput={runFind}
+        onkeydown={onFindKey}
+        placeholder="Find in note"
+        aria-label="Find in note"
+        spellcheck="false"
+      />
+      <span class="find-count" aria-live="polite">
+        {findQuery ? (findInfo.count ? `${findInfo.current + 1} of ${findInfo.count}` : "No results") : ""}
+      </span>
+      <button class="icon-btn" aria-label="Previous match" title="Previous (Shift+Enter)" disabled={!findInfo.count} onclick={() => step(-1)}>
+        <ChevronUp size={16} />
+      </button>
+      <button class="icon-btn" aria-label="Next match" title="Next (Enter)" disabled={!findInfo.count} onclick={() => step(1)}>
+        <ChevronDown size={16} />
+      </button>
+      <button class="find-done" onclick={closeFind}>Done</button>
+    </div>
+  {/if}
 
   {#if note?.deletedAt}
     <div class="trash-banner">
@@ -711,6 +812,55 @@
     height: 0;
     pointer-events: none;
     color: var(--text-tertiary);
+  }
+
+  /* ------------------------------------------------------- find & search */
+  .find-bar {
+    position: absolute;
+    top: calc(var(--header-h) + 6px);
+    right: 16px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: min(360px, calc(100% - 32px));
+    padding: 4px 4px 4px 10px;
+    border-radius: var(--radius-md);
+    background: var(--bg-list);
+    box-shadow: var(--shadow-pop);
+    color: var(--text-secondary);
+  }
+  .find-bar input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    border: none;
+    background: none;
+    outline: none;
+    color: var(--text);
+  }
+  .find-count {
+    flex: none;
+    font-size: 12px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .find-done {
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    color: var(--accent-strong);
+  }
+  .find-done:hover {
+    background: var(--bg-hover);
+  }
+  .scroll :global(.search-match) {
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--accent) 38%, transparent);
+  }
+  .scroll :global(.search-match.current) {
+    background: var(--accent);
+    color: var(--accent-contrast);
   }
 
   /* ----------------------------------------------------------------- links */

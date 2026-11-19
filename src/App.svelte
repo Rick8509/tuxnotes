@@ -91,10 +91,17 @@
       e.preventDefault();
       if (!ui.sidebarShown) ui.toggleSidebar();
       app.creatingFolder = true;
-    } else if (key === "f" && !e.shiftKey) {
+    } else if (key === "f") {
       e.preventDefault();
-      if (!ui.listVisible) ui.toggleFocus();
-      app.focusSearchTick++;
+      // Like Apple Notes: Ctrl+F in a note finds in that note; Ctrl+Shift+F (or Ctrl+F
+      // anywhere else) searches all notes.
+      const focused = document.activeElement as HTMLElement | null;
+      if (!e.shiftKey && app.current && focused?.closest(".prose, .find-bar")) {
+        app.findInNoteTick++;
+      } else {
+        if (!ui.listVisible) ui.toggleFocus();
+        app.focusSearchTick++;
+      }
     } else if (e.key === "Delete" && app.selectedId) {
       e.preventDefault();
       void app.deleteNote(app.selectedId);

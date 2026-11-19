@@ -58,8 +58,10 @@ class AppState {
   confirmRequest = $state<ConfirmRequest | null>(null);
   /** Bumped when the editor should take keyboard focus (e.g. after "New Note"). */
   focusEditorTick = $state(0);
-  /** Bumped when the search field should take focus (Ctrl+F). */
+  /** Bumped when the search field should take focus (Ctrl+Shift+F, or Ctrl+F outside the editor). */
   focusSearchTick = $state(0);
+  /** Bumped to open the find bar in the open note (Ctrl+F in the editor). */
+  findInNoteTick = $state(0);
   /** Show the inline "new folder" field in the sidebar. */
   creatingFolder = $state(false);
 

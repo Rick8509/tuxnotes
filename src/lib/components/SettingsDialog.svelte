@@ -94,7 +94,8 @@
       items: [
         ["New note", "Ctrl+N"],
         ["New folder", "Ctrl+Shift+N"],
-        ["Search", "Ctrl+F"],
+        ["Find in the open note", "Ctrl+F (in a note)"],
+        ["Search all notes", "Ctrl+Shift+F"],
         ["Delete note", "Ctrl+Delete"],
         ["Settings", "Ctrl+,"],
       ],

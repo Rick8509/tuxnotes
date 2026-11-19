@@ -12,7 +12,7 @@
 - **Tables**: insert from the toolbar, right-click a cell to add or remove rows and columns, Tab between cells, drag borders to resize columns
 - **Images and attachments**: paste a screenshot, drag in files, or use the paperclip button. Images show in the note; other files appear as chips you can open (double-click) or save a copy of. Attachments are included in backups
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
-- Fast full-text search that ignores accents ("cafe" finds "café")
+- Fast full-text search that ignores accents ("cafe" finds "café"); matches are highlighted in the open note, and **Find in note** (`Ctrl+F`) steps through matches
 - **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
 - Rounded, borderless window. Hide the sidebar, use focus mode to hide both side panes, and drag the dividers to resize them; the window remembers its size and layout
 - Notes grouped like Apple Notes (Pinned, Today, Yesterday, Previous 7 Days, …); drag a note onto a folder to move it
@@ -27,7 +27,8 @@
 | New note | `Ctrl+N` |
 | Settings | `Ctrl+,` |
 | New folder | `Ctrl+Shift+N` |
-| Search | `Ctrl+F` |
+| Find in the open note | `Ctrl+F` (while typing in a note) |
+| Search all notes | `Ctrl+Shift+F` (or `Ctrl+F` elsewhere) |
 | Delete note | `Ctrl+Delete` |
 | Checklist | `Ctrl+Shift+L` |
 | Title / Heading / Subheading / Body | `Ctrl+Shift+T` / `H` / `J` / `B` |
