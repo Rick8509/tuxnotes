@@ -28,11 +28,15 @@ chacha20poly1305 = "0.11"
 zeroize = "1"
 wiremock = "0.6"
 
-# Password hashing is deliberately expensive; unoptimized it takes many seconds,
-# so keep it fast in debug builds and tests too.
+# Password hashing is deliberately expensive and encryption runs over whole backups;
+# unoptimized they take many seconds, so keep them fast in debug builds and tests too.
 [profile.dev.package.argon2]
 opt-level = 3
 [profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.poly1305]
 opt-level = 3
 
 [profile.release]

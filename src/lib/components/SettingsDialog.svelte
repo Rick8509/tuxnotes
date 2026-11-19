@@ -43,7 +43,8 @@
   function onkeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || app.confirmRequest || app.lockPrompt) return;
     e.preventDefault();
-    if (section === "backup" && backupView === "restore") backupView = "home";
+    if (section === "backup" && (backupView === "restore" || backupView === "password")) backupView = "home";
+    else if (section === "backup" && backupView === "restorePassword") backupView = "restore";
     else close();
   }
 
@@ -469,8 +470,8 @@
     font: inherit;
   }
 
-  /* iOS-style switch */
-  .switch {
+  /* iOS-style switch (also used by the Backup panel inside this window) */
+  .window :global(.switch) {
     appearance: none;
     -webkit-appearance: none;
     flex: none;
@@ -482,7 +483,7 @@
     position: relative;
     transition: background 0.15s;
   }
-  .switch::after {
+  .window :global(.switch::after) {
     content: "";
     position: absolute;
     top: 2px;
@@ -494,13 +495,13 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
     transition: transform 0.15s;
   }
-  .switch:checked {
+  .window :global(.switch:checked) {
     background: var(--accent);
   }
-  .switch:checked::after {
+  .window :global(.switch:checked::after) {
     transform: translateX(16px);
   }
-  .switch:disabled {
+  .window :global(.switch:disabled) {
     opacity: 0.4;
   }
 

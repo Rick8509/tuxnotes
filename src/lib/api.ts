@@ -78,14 +78,18 @@ export const api = {
   discardNoteIfBlank: (id: string) => call<boolean>("discard_note_if_blank", { id }),
 
   backupStatus: () => call<BackupStatus>("backup_status"),
-  setBackupPreferences: (autoBackup: AutoBackup, keepBackups: number) =>
-    call<BackupStatus>("set_backup_preferences", { autoBackup, keepBackups }),
+  setBackupPreferences: (autoBackup: AutoBackup, keepBackups: number, backupOnClose: boolean) =>
+    call<BackupStatus>("set_backup_preferences", { autoBackup, keepBackups, backupOnClose }),
+  /** Encrypt backups with `password` (or change it); null turns encryption off. */
+  setBackupPassword: (password: string | null) => call<BackupStatus>("set_backup_password", { password }),
+  backupOnCloseNeeded: () => call<boolean>("backup_on_close_needed"),
+  backupBeforeExit: () => call<boolean>("backup_before_exit"),
   googleSignIn: () => call<BackupStatus>("google_sign_in"),
   googleCancelSignIn: () => call<void>("google_cancel_sign_in"),
   googleSignOut: () => call<BackupStatus>("google_sign_out"),
   backupNow: () => call<BackupInfo>("backup_now"),
   listBackups: () => call<BackupInfo[]>("list_backups"),
-  restoreBackup: (id: string) => call<RestoreResult>("restore_backup", { id }),
+  restoreBackup: (id: string, password?: string) => call<RestoreResult>("restore_backup", { id, password: password ?? null }),
 
   appInfo: () => call<AppInfo>("app_info"),
 

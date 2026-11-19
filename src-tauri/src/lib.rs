@@ -82,6 +82,7 @@ pub fn run() {
                 app.package_info().version.to_string(),
             );
             backup.clean_tmp();
+            backup.set_change_baseline(store.change_count());
             app.manage(AppState {
                 store: Mutex::new(store),
                 backup,
@@ -120,6 +121,9 @@ pub fn run() {
             commands::discard_note_if_blank,
             commands::backup_status,
             commands::set_backup_preferences,
+            commands::set_backup_password,
+            commands::backup_on_close_needed,
+            commands::backup_before_exit,
             commands::google_sign_in,
             commands::google_cancel_sign_in,
             commands::google_sign_out,

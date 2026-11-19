@@ -68,6 +68,9 @@ What locking doesn't hide: the note's **title** (its first line) stays visible i
 
 Open **Settings** (the gear at the bottom of the sidebar, or `Ctrl+,`) → **Backup**, then click **Back Up to Google Drive** or **Restore from Google Drive**. TuxNotes asks before opening your browser to sign in with Google; once you've allowed access, it does the backup (and turns on daily automatic backups), or shows your backups to restore.
 
+- **Encrypt backups** (Settings → Backup): backups are encrypted on your computer before they're uploaded (XChaCha20-Poly1305, with the key derived from your password by Argon2id). TuxNotes keeps that key in your system keyring so automatic backups keep working; the password itself is never stored. Restoring on another computer asks for the password. Encrypted backups don't even show how many notes they hold. **A forgotten backup password can't be recovered.**
+- **Back up when closing** (on by default): if anything changed since the last backup, closing TuxNotes hides the window right away and finishes a backup first (for up to 90 seconds).
+
 Release builds come with Google sign-in built in. If you build TuxNotes yourself, see [docs/google-setup.md](docs/google-setup.md) to create your own (free) Google OAuth client.
 
 ## Building from source
@@ -150,7 +153,7 @@ Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-taur
 
 - [x] v0.1: folders, notes, rich text, checklists, search, pinning, Recently Deleted
 - [x] v0.2: backup to and restore from Google Drive, with automatic scheduled backups
-- [ ] v0.3: tables ✅, images and attachments ✅, Markdown and PDF export ✅, subfolders ✅, locked notes ✅, encrypted backups
+- [x] v0.3: tables, images and attachments, Markdown and PDF export, subfolders, locked notes, encrypted backups
 - [ ] Flathub release
 
 ## License

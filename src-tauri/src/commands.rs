@@ -150,8 +150,37 @@ pub fn set_backup_preferences(
     state: State<'_, AppState>,
     auto_backup: AutoBackup,
     keep_backups: u32,
+    backup_on_close: bool,
 ) -> BackupStatus {
-    state.backup.set_preferences(auto_backup, keep_backups)
+    state
+        .backup
+        .set_preferences(auto_backup, keep_backups, backup_on_close)
+}
+
+/// Encrypt backups with a password (or change it); `None` turns encryption off.
+#[tauri::command]
+pub async fn set_backup_password(
+    state: State<'_, AppState>,
+    password: Option<String>,
+) -> CmdResult<BackupStatus> {
+    state.backup.set_backup_password(password).await
+}
+
+/// Quick check when the window closes: is there anything to back up first?
+#[tauri::command]
+pub fn backup_on_close_needed(state: State<'_, AppState>) -> bool {
+    match state.store.lock() {
+        Ok(store) => state.backup.backup_needed_on_close(&store),
+        Err(_) => false,
+    }
+}
+
+#[tauri::command]
+pub async fn backup_before_exit(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<bool> {
+    state.backup.backup_before_exit(&app).await
 }
 
 #[tauri::command]
@@ -190,8 +219,9 @@ pub async fn restore_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
+    password: Option<String>,
 ) -> CmdResult<RestoreResult> {
-    state.backup.restore(&app, &id).await
+    state.backup.restore(&app, &id, password).await
 }
 
 // ------------------------------------------------------------------ about

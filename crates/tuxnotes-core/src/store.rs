@@ -663,6 +663,28 @@ impl Store {
         )?)
     }
 
+    /// Rows changed through this store since it was opened. Comparing two readings tells
+    /// whether anything changed in between (e.g. since the last backup).
+    pub fn change_count(&self) -> u64 {
+        self.conn.total_changes()
+    }
+
+    /// The newest time anything was edited, created, deleted or renamed (Unix ms).
+    /// Doesn't see every change (moving a note between folders keeps its time); use
+    /// together with [`Store::change_count`].
+    pub fn last_change_at(&self) -> Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT MAX(t) FROM (
+                SELECT MAX(updated_at) AS t FROM notes
+                UNION ALL SELECT MAX(deleted_at) FROM notes
+                UNION ALL SELECT MAX(updated_at) FROM folders
+                UNION ALL SELECT MAX(created_at) FROM attachments
+             )",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Run SQLite's integrity check, including the full-text index.
     pub fn check_integrity(&self) -> Result<()> {
         let result: String = self

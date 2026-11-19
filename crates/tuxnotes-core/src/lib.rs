@@ -10,6 +10,7 @@
 pub mod attachments;
 pub mod backup;
 pub mod crypto;
+pub mod encrypted_backup;
 pub mod error;
 pub mod lock;
 pub mod migrations;

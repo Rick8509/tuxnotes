@@ -12,12 +12,14 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tuxnotes_core::Store;
 use tuxnotes_core::backup;
+use tuxnotes_core::crypto::{KdfParams, SALT_LEN};
+use tuxnotes_core::encrypted_backup::{self, BackupKey};
 use tuxnotes_gdrive::{DriveClient, LoopbackReceiver, OAuthClient, Pkce, Tokens, random_state};
 
 use crate::AppState;
-use crate::credentials::TokenVault;
+use crate::credentials::{BACKUP_KEY_ACCOUNT, TokenVault};
 use crate::google_client::{self, ClientSource};
-use crate::settings::{AutoBackup, SettingsStore};
+use crate::settings::{AutoBackup, BackupEncryption, SettingsStore};
 
 /// Event carrying the Google sign-in URL, so the UI can offer "Copy link"
 /// if the browser didn't open.
@@ -31,6 +33,8 @@ const SAFETY_PREFIX: &str = "tuxnotes-before-restore-";
 const SAFETY_KEEP: usize = 5;
 /// Largest backup we're willing to download into memory.
 const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+/// Returned by `restore` when an encrypted backup needs its password; the UI asks for it.
+pub const PASSWORD_NEEDED: &str = "BACKUP_PASSWORD_NEEDED";
 
 pub type CmdResult<T> = Result<T, String>;
 
@@ -57,6 +61,9 @@ pub struct BackupStatus {
     pub keep_backups: u32,
     pub last_backup_at: Option<i64>,
     pub last_backup_error: Option<String>,
+    /// New backups are encrypted with a password.
+    pub encrypted: bool,
+    pub backup_on_close: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +75,9 @@ pub struct BackupInfo {
     pub size: Option<u64>,
     pub note_count: Option<i64>,
     pub app_version: Option<String>,
+    pub encrypted: bool,
+    /// Encrypted with a password this computer doesn't have the key for.
+    pub needs_password: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +94,11 @@ pub struct BackupService {
     http: reqwest::Client,
     settings: SettingsStore,
     vault: TokenVault,
+    /// The key derived from the backup password, when backups are encrypted.
+    key_vault: TokenVault,
+    /// `Store::change_count` when the last backup was made (or TuxNotes started), to
+    /// tell whether there's anything new to back up when closing.
+    change_baseline: Mutex<u64>,
     data_dir: PathBuf,
     config_dir: PathBuf,
     db_path: PathBuf,
@@ -128,6 +143,8 @@ impl BackupService {
             http,
             settings: SettingsStore::load(config_dir.join("settings.json")),
             vault,
+            key_vault: TokenVault::with_account(BACKUP_KEY_ACCOUNT, data_dir.join("backup-key")),
+            change_baseline: Mutex::new(0),
             attachments_dir: data_dir.join("attachments"),
             data_dir,
             config_dir,
@@ -171,15 +188,98 @@ impl BackupService {
             keep_backups: s.keep_backups,
             last_backup_at: s.last_backup_at,
             last_backup_error: s.last_backup_error.clone(),
+            encrypted: s.backup_encryption.is_some(),
+            backup_on_close: s.backup_on_close,
         }
     }
 
-    pub fn set_preferences(&self, auto_backup: AutoBackup, keep_backups: u32) -> BackupStatus {
+    pub fn set_preferences(
+        &self,
+        auto_backup: AutoBackup,
+        keep_backups: u32,
+        backup_on_close: bool,
+    ) -> BackupStatus {
         self.settings.update(|s| {
             s.auto_backup = auto_backup;
             s.keep_backups = keep_backups;
+            s.backup_on_close = backup_on_close;
         });
         self.status()
+    }
+
+    // --------------------------------------------------------------- encryption
+
+    /// Encrypt new backups with `password` (also used to change it), or stop encrypting
+    /// them with `None`. Backups already on Google Drive keep the password they were made with.
+    pub async fn set_backup_password(&self, password: Option<String>) -> CmdResult<BackupStatus> {
+        // Not in the middle of a backup that's using the current key.
+        let _wait = self.operation.lock().await;
+        let vault = self.key_vault.clone();
+        match password {
+            None => {
+                tauri::async_runtime::spawn_blocking(move || vault.clear())
+                    .await
+                    .map_err(err)?;
+                self.settings.update(|s| s.backup_encryption = None);
+            }
+            Some(password) => {
+                let encryption = tauri::async_runtime::spawn_blocking(move || {
+                    let key = BackupKey::create(&password).map_err(err)?;
+                    vault.save(&to_hex(key.key_bytes())).map_err(err)?;
+                    Ok::<_, String>(encryption_settings(&key))
+                })
+                .await
+                .map_err(err)??;
+                self.settings
+                    .update(|s| s.backup_encryption = Some(encryption));
+            }
+        }
+        Ok(self.status())
+    }
+
+    // ------------------------------------------------------- backing up on close
+
+    /// Remember the store's change counter as "backed up" (at startup and after
+    /// each backup or restore).
+    pub fn set_change_baseline(&self, changes: u64) {
+        *self.change_baseline.lock().unwrap() = changes;
+    }
+
+    /// Whether closing TuxNotes should make a backup first: the setting is on, Google
+    /// Drive is connected, and something changed since the last backup (or it failed).
+    pub fn backup_needed_on_close(&self, store: &Store) -> bool {
+        let s = self.settings.get();
+        if !s.backup_on_close || !*self.signed_in.lock().unwrap() {
+            return false;
+        }
+        let edited_since = match (store.last_change_at().ok().flatten(), s.last_backup_at) {
+            (Some(changed), Some(backed_up)) => changed > backed_up,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        store.change_count() > *self.change_baseline.lock().unwrap()
+            || edited_since
+            || s.last_backup_error.is_some()
+    }
+
+    /// The backup made while TuxNotes closes (its window is already hidden).
+    /// Returns whether a backup was made.
+    pub async fn backup_before_exit(&self, app: &AppHandle) -> CmdResult<bool> {
+        // Let a backup or restore that's already running finish first.
+        drop(self.operation.lock().await);
+        let needed = {
+            let state = app.state::<AppState>();
+            let store = state
+                .store
+                .lock()
+                .map_err(|_| "note store unavailable".to_string())?;
+            self.backup_needed_on_close(&store)
+        };
+        if !needed {
+            return Ok(false);
+        }
+        log::info!("backing up before closing");
+        self.backup_now(app).await.map(|_| true)
     }
 
     /// True when an automatic backup should run now.
@@ -374,32 +474,71 @@ impl BackupService {
     async fn run_backup(&self, app: &AppHandle) -> CmdResult<BackupInfo> {
         let tmp = self.tmp_dir()?;
         let archive = tmp.join(backup::backup_file_name(now_ms()));
-        let _cleanup = RemoveOnDrop(vec![archive.clone()]);
+        let sealed = archive.with_extension("zip.enc");
+        let _cleanup = RemoveOnDrop(vec![archive.clone(), sealed.clone()]);
+        let encryption = self.settings.get().backup_encryption;
 
         let app2 = app.clone();
         let archive2 = archive.clone();
         let attachments = self.attachments_dir.clone();
         let version = self.app_version.clone();
-        let manifest = tauri::async_runtime::spawn_blocking(move || {
+        let (manifest, changes) = tauri::async_runtime::spawn_blocking(move || {
             let state = app2.state::<AppState>();
             let store = state
                 .store
                 .lock()
                 .map_err(|_| "note store unavailable".to_string())?;
-            backup::create_backup(&store, Some(&attachments), &archive2, &version).map_err(err)
+            let manifest = backup::create_backup(&store, Some(&attachments), &archive2, &version)
+                .map_err(err)?;
+            Ok::<_, String>((manifest, store.change_count()))
         })
         .await
         .map_err(err)??;
-        let bytes = fs::read(&archive).map_err(err)?;
-        let name = archive.file_name().unwrap().to_string_lossy().into_owned();
 
-        let props = BTreeMap::from([
+        // Encrypt before anything leaves the computer. If the key is missing, fail
+        // rather than upload unencrypted.
+        let upload = match &encryption {
+            None => archive.clone(),
+            Some(enc) => {
+                let (vault, enc, src, dest) = (
+                    self.key_vault.clone(),
+                    enc.clone(),
+                    archive.clone(),
+                    sealed.clone(),
+                );
+                tauri::async_runtime::spawn_blocking(move || {
+                    let key = load_backup_key(&vault, &enc)?;
+                    encrypted_backup::encrypt_file(&src, &dest, &key).map_err(err)
+                })
+                .await
+                .map_err(err)??;
+                sealed.clone()
+            }
+        };
+        let bytes = fs::read(&upload).map_err(err)?;
+        let name = upload.file_name().unwrap().to_string_lossy().into_owned();
+
+        let mut props = BTreeMap::from([
             (APP_TAG_KEY.to_string(), APP_TAG_VALUE.to_string()),
             ("formatVersion".into(), manifest.format_version.to_string()),
             ("createdAt".into(), manifest.created_at.to_string()),
-            ("noteCount".into(), manifest.note_count.to_string()),
             ("appVersion".into(), manifest.app_version.clone()),
         ]);
+        match &encryption {
+            // Encrypted backups don't reveal even how many notes they hold.
+            Some(enc) => {
+                props.insert("encrypted".into(), "1".into());
+                props.insert("keySalt".into(), enc.salt.clone());
+            }
+            None => {
+                props.insert("noteCount".into(), manifest.note_count.to_string());
+            }
+        }
+        let mime = if encryption.is_some() {
+            "application/octet-stream"
+        } else {
+            "application/zip"
+        };
         let folder = self.backup_folder().await?;
         let drive = self.drive();
         let file = self
@@ -411,14 +550,11 @@ impl BackupService {
                     bytes.clone(),
                     props.clone(),
                 );
-                async move {
-                    drive
-                        .upload(&t, &folder, &name, "application/zip", bytes, &props)
-                        .await
-                }
+                async move { drive.upload(&t, &folder, &name, mime, bytes, &props).await }
             })
             .await?;
         log::info!("uploaded backup {} ({} bytes)", file.name, bytes.len());
+        self.set_change_baseline(changes);
 
         if let Err(e) = self.prune_remote(&folder).await {
             log::warn!("could not remove old backups: {e}");
@@ -430,6 +566,8 @@ impl BackupService {
             size: file.size.or(Some(bytes.len() as u64)),
             note_count: Some(manifest.note_count),
             app_version: Some(manifest.app_version),
+            encrypted: encryption.is_some(),
+            needs_password: false,
         })
     }
 
@@ -469,9 +607,14 @@ impl BackupService {
                 }
             })
             .await?;
+        let local_salt = self.settings.get().backup_encryption.map(|e| e.salt);
         Ok(files
             .into_iter()
             .map(|f| BackupInfo {
+                encrypted: f.app_properties.get("encrypted").is_some_and(|v| v == "1"),
+                needs_password: f.app_properties.get("encrypted").is_some_and(|v| v == "1")
+                    && (local_salt.is_none()
+                        || f.app_properties.get("keySalt") != local_salt.as_ref()),
                 created_at: f
                     .app_properties
                     .get("createdAt")
@@ -490,7 +633,14 @@ impl BackupService {
 
     // ------------------------------------------------------------------ restore
 
-    pub async fn restore(&self, app: &AppHandle, file_id: &str) -> CmdResult<RestoreResult> {
+    /// Restore a backup. Encrypted backups are opened with `password`, or without one
+    /// when this computer has the key for them; otherwise this fails with [`PASSWORD_NEEDED`].
+    pub async fn restore(
+        &self,
+        app: &AppHandle,
+        file_id: &str,
+        password: Option<String>,
+    ) -> CmdResult<RestoreResult> {
         let (_lock, _busy) = self.begin(Busy::Restoring)?;
         let drive = self.drive();
         let bytes = self
@@ -502,20 +652,53 @@ impl BackupService {
 
         let tmp = self.tmp_dir()?;
         let stamp = now_ms();
+        let download = tmp.join(format!("restore-{stamp}.download"));
         let archive = tmp.join(format!("restore-{stamp}.zip"));
         let staged_db = tmp.join(format!("restore-{stamp}.db"));
         let staged_attachments = tmp.join(format!("restore-{stamp}-attachments"));
-        let mut cleanup = vec![archive.clone(), staged_attachments.clone()];
+        let mut cleanup = vec![
+            download.clone(),
+            archive.clone(),
+            staged_attachments.clone(),
+        ];
         cleanup.extend(backup::db_with_sidecars(&staged_db));
         let _cleanup = RemoveOnDrop(cleanup);
-        fs::write(&archive, &bytes).map_err(err)?;
+        fs::write(&download, &bytes).map_err(err)?;
+
+        // Decrypt first (if needed), before touching anything.
+        let encryption = self.settings.get().backup_encryption;
+        let (vault, download2, archive2) =
+            (self.key_vault.clone(), download.clone(), archive.clone());
+        let adopt = tauri::async_runtime::spawn_blocking(move || {
+            let Some(header) = encrypted_backup::read_header(&download2).map_err(err)? else {
+                fs::rename(&download2, &archive2).map_err(err)?;
+                return Ok::<_, String>(None);
+            };
+            let typed = password.is_some();
+            let key = match password {
+                Some(password) => {
+                    BackupKey::derive(&password, header.params, header.salt).map_err(err)?
+                }
+                None => encryption
+                    .as_ref()
+                    .and_then(|enc| load_backup_key(&vault, enc).ok())
+                    .filter(|key| key.fits(&header))
+                    .ok_or_else(|| PASSWORD_NEEDED.to_string())?,
+            };
+            encrypted_backup::decrypt_file(&download2, &archive2, &key).map_err(err)?;
+            // Restoring an encrypted backup on a computer that doesn't encrypt yet:
+            // keep encrypting with the same password from now on.
+            Ok((typed && encryption.is_none()).then_some(key))
+        })
+        .await
+        .map_err(err)??;
 
         let app2 = app.clone();
         let db_path = self.db_path.clone();
         let attachments = self.attachments_dir.clone();
         let safety_dir = self.data_dir.join("safety");
         let version = self.app_version.clone();
-        tauri::async_runtime::spawn_blocking(move || {
+        let result = tauri::async_runtime::spawn_blocking(move || {
             // 1. Fully validate the backup (database and attachments) into separate files.
             let manifest = backup::extract_backup(&archive, &staged_db, Some(&staged_attachments))
                 .map_err(err)?;
@@ -540,15 +723,36 @@ impl BackupService {
                 &attachments,
                 &staged_attachments,
             )?;
-            Ok::<_, String>(RestoreResult {
+            let result = RestoreResult {
                 note_count: manifest.note_count,
                 folder_count: manifest.folder_count,
                 backup_created_at: manifest.created_at,
                 safety_copy: safety.display().to_string(),
-            })
+            };
+            Ok::<_, String>((result, store.change_count()))
         })
         .await
-        .map_err(err)?
+        .map_err(err)??;
+        let (result, changes) = result;
+        // The notes now match a backup: nothing new to back up.
+        self.set_change_baseline(changes);
+
+        if let Some(key) = adopt {
+            let vault = self.key_vault.clone();
+            let encryption = encryption_settings(&key);
+            let saved =
+                tauri::async_runtime::spawn_blocking(move || vault.save(&to_hex(key.key_bytes())))
+                    .await
+                    .map_err(err)?;
+            match saved {
+                Ok(()) => {
+                    self.settings
+                        .update(|s| s.backup_encryption = Some(encryption));
+                }
+                Err(e) => log::warn!("could not save the backup key: {e}"),
+            }
+        }
+        Ok(result)
     }
 
     fn tmp_dir(&self) -> CmdResult<PathBuf> {
@@ -561,6 +765,48 @@ impl BackupService {
     pub fn clean_tmp(&self) {
         let _ = fs::remove_dir_all(self.data_dir.join("tmp"));
     }
+}
+
+fn encryption_settings(key: &BackupKey) -> BackupEncryption {
+    BackupEncryption {
+        salt: to_hex(&key.salt),
+        m_kib: key.params.m_kib,
+        t: key.params.t,
+        p: key.params.p,
+    }
+}
+
+/// The saved backup key (blocking: reads the keyring).
+fn load_backup_key(vault: &TokenVault, enc: &BackupEncryption) -> CmdResult<BackupKey> {
+    let missing = || {
+        "The backup password isn't saved on this computer any more. \
+         Set it again in Settings → Backup."
+            .to_string()
+    };
+    let key = from_hex(&vault.load().ok_or_else(missing)?).ok_or_else(missing)?;
+    let salt: [u8; SALT_LEN] = from_hex(&enc.salt)
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(missing)?;
+    let params = KdfParams {
+        m_kib: enc.m_kib,
+        t: enc.t,
+        p: enc.p,
+    };
+    BackupKey::from_parts(params, salt, &key).map_err(err)
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn from_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// Replace the live database and attachments folder with the staged ones (already
@@ -638,6 +884,18 @@ pub fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hex_round_trips_and_rejects_bad_input() {
+        let bytes = [0u8, 1, 0xab, 0xff, 0x10];
+        assert_eq!(to_hex(&bytes), "0001abff10");
+        assert_eq!(from_hex("0001abff10").unwrap(), bytes);
+        assert_eq!(from_hex("0001ABFF10").unwrap(), bytes);
+        assert_eq!(from_hex("").unwrap(), Vec::<u8>::new());
+        for bad in ["0", "zz", "0g", "é1"] {
+            assert!(from_hex(bad).is_none(), "{bad}");
+        }
+    }
 
     #[test]
     fn swap_replaces_live_database_and_keeps_store_usable() {

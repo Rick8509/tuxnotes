@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { isTauri } from "./lib/api";
+  import { api, isTauri } from "./lib/api";
   import { app } from "./lib/stores/app.svelte";
   import { ui } from "./lib/stores/ui.svelte";
   import { printNote } from "./lib/importExport";
@@ -14,15 +14,30 @@
   import SettingsDialog from "./lib/components/SettingsDialog.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
 
+  /** How long closing waits for a backup before quitting anyway. */
+  const CLOSE_BACKUP_LIMIT_MS = 90_000;
+
   onMount(() => {
     void app.init();
     const cleanups: (() => void)[] = [];
 
     if (isTauri) {
       const win = getCurrentWindow();
-      // Save pending edits before the window closes (title-bar button, Alt+F4, etc.).
-      win.onCloseRequested(async () => {
+      // Closing (title-bar button, Alt+F4, etc.): save pending edits and lock locked notes.
+      // Then, if "Back up when closing" is on and something changed, the window hides
+      // right away while the backup finishes (for at most CLOSE_BACKUP_LIMIT_MS).
+      win.onCloseRequested(async (event) => {
         await app.flush();
+        await app.lockNow();
+        const needed = await api.backupOnCloseNeeded().catch(() => false);
+        if (!needed) return;
+        await win.hide();
+        await Promise.race([
+          api.backupBeforeExit().catch((e) => console.warn("backup before closing failed:", e)),
+          new Promise((resolve) => setTimeout(resolve, CLOSE_BACKUP_LIMIT_MS)),
+        ]);
+        // Opened again while the backup ran (single-instance shows the window): stay open.
+        if (await win.isVisible()) event.preventDefault();
       }).then((fn) => cleanups.push(fn));
 
       // Track maximized/fullscreen so corners can go square when the window fills the screen.

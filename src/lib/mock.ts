@@ -5,7 +5,7 @@
 import { extractText, isBlank } from "./text";
 import { registerPreviewUrl } from "./attachmentUrls";
 import type { AttachResult, Attachment, MarkdownFile, BackupInfo, BackupStatus, DocJSON, Folder, LockStatus, Note, NoteFilter, NoteSummary } from "./types";
-import { IMAGE_MIMES } from "./types";
+import { BACKUP_PASSWORD_NEEDED, IMAGE_MIMES } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
 
@@ -326,7 +326,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
 
 // --------------------------------------------------------- fake Google Drive
 
-const backup: BackupStatus & { files: { info: BackupInfo; data: string }[]; cancel?: () => void } = {
+type MockBackupFile = { info: BackupInfo; data: string; password: string | null };
+const backup: BackupStatus & { files: MockBackupFile[]; cancel?: () => void; password: string | null } = {
   clientSource: "builtIn",
   signedIn: false,
   account: null,
@@ -335,11 +336,14 @@ const backup: BackupStatus & { files: { info: BackupInfo; data: string }[]; canc
   keepBackups: 10,
   lastBackupAt: null,
   lastBackupError: null,
+  encrypted: false,
+  backupOnClose: true,
   files: [],
+  password: null,
 };
 const status = (): BackupStatus => {
-  const { files: _f, cancel: _c, ...rest } = backup;
-  return rest;
+  const { files: _f, cancel: _c, password: _p, ...rest } = backup;
+  return { ...rest, encrypted: backup.password !== null };
 };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const signedIn = () => backup.signedIn || fail("You're not signed in to Google Drive.");
@@ -352,10 +356,18 @@ Object.assign(handlers, {
     database: "~/.local/share/io.github.tuxnotes.TuxNotes/notes.db",
     configDir: "~/.config/io.github.tuxnotes.TuxNotes",
   }),
-  set_backup_preferences: ({ autoBackup, keepBackups }: Args) => {
-    Object.assign(backup, { autoBackup, keepBackups: Math.min(100, Math.max(1, keepBackups)) });
+  set_backup_preferences: ({ autoBackup, keepBackups, backupOnClose }: Args) => {
+    Object.assign(backup, { autoBackup, keepBackups: Math.min(100, Math.max(1, keepBackups)), backupOnClose });
     return status();
   },
+  set_backup_password: async ({ password }: Args) => {
+    if (password !== null && [...String(password)].length < 8) fail("Use a backup password of at least 8 characters.");
+    await wait(300);
+    backup.password = password;
+    return status();
+  },
+  backup_on_close_needed: () => false,
+  backup_before_exit: () => false,
   google_sign_in: async () => {
     backup.busy = "signingIn";
     const cancelled = await Promise.race([
@@ -378,15 +390,18 @@ Object.assign(handlers, {
     await wait(600);
     const t = now();
     const data = JSON.stringify(db);
+    const encrypted = backup.password !== null;
     const info: BackupInfo = {
       id: uid(),
-      name: `tuxnotes-backup-${t}.zip`,
+      name: `tuxnotes-backup-${t}.zip${encrypted ? ".enc" : ""}`,
       createdAt: t,
       size: data.length,
-      noteCount: db.notes.length,
+      noteCount: encrypted ? null : db.notes.length,
       appVersion: "0.1.0",
+      encrypted,
+      needsPassword: false,
     };
-    backup.files.unshift({ info, data });
+    backup.files.unshift({ info, data, password: backup.password });
     backup.files = backup.files.slice(0, backup.keepBackups);
     Object.assign(backup, { busy: null, lastBackupAt: t, lastBackupError: null });
     return info;
@@ -394,11 +409,17 @@ Object.assign(handlers, {
   list_backups: async () => {
     signedIn();
     await wait(300);
-    return backup.files.map((f) => f.info);
+    return backup.files.map((f) => ({ ...f.info, needsPassword: f.password !== null && f.password !== backup.password }));
   },
-  restore_backup: async ({ id }: Args) => {
+  restore_backup: async ({ id, password }: Args) => {
     signedIn();
     const file = backup.files.find((f) => f.info.id === id) ?? fail("Backup not found.");
+    if (file.password !== null) {
+      if (password == null && file.password !== backup.password) fail(BACKUP_PASSWORD_NEEDED);
+      if (password != null && password !== file.password) fail("Wrong password.");
+      // Like the app: restoring with a typed password turns on encryption with it.
+      if (password != null && backup.password === null) backup.password = password;
+    }
     backup.busy = "restoring";
     await wait(600);
     db = JSON.parse(file.data);

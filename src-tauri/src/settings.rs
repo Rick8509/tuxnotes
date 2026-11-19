@@ -27,6 +27,18 @@ impl AutoBackup {
     }
 }
 
+/// How backups are encrypted: the salt and Argon2id costs the backup key was derived
+/// with. The key itself is in the keyring; the password is never stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupEncryption {
+    /// Hex.
+    pub salt: String,
+    pub m_kib: u32,
+    pub t: u32,
+    pub p: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -37,6 +49,10 @@ pub struct Settings {
     pub last_backup_error: Option<String>,
     /// Email of the connected Google account, for display only.
     pub google_account: Option<String>,
+    /// Set when backups are encrypted with a password.
+    pub backup_encryption: Option<BackupEncryption>,
+    /// Back up (if anything changed) when TuxNotes is closed.
+    pub backup_on_close: bool,
 }
 
 impl Default for Settings {
@@ -47,6 +63,8 @@ impl Default for Settings {
             last_backup_at: None,
             last_backup_error: None,
             google_account: None,
+            backup_encryption: None,
+            backup_on_close: true,
         }
     }
 }

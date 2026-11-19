@@ -1,4 +1,4 @@
-//! Storage for the Google refresh token.
+//! Storage for secrets: the Google refresh token and the backup encryption key.
 //!
 //! Preferred: the desktop keyring via the Secret Service API (GNOME Keyring,
 //! KWallet, KeePassXC…). If no keyring is available (e.g. minimal window
@@ -12,23 +12,34 @@ use std::path::PathBuf;
 
 const SERVICE: &str = "io.github.tuxnotes.TuxNotes";
 const ACCOUNT: &str = "google-drive-refresh-token";
+/// Key derived from the backup password (never the password itself).
+pub const BACKUP_KEY_ACCOUNT: &str = "backup-encryption-key";
 
 #[derive(Clone)]
 pub struct TokenVault {
+    account: &'static str,
     fallback_path: PathBuf,
 }
 
 impl TokenVault {
+    /// The vault for the Google refresh token.
     pub fn new(fallback_path: PathBuf) -> Self {
-        Self { fallback_path }
+        Self::with_account(ACCOUNT, fallback_path)
     }
 
-    fn entry() -> keyring::Result<keyring::Entry> {
-        keyring::Entry::new(SERVICE, ACCOUNT)
+    pub fn with_account(account: &'static str, fallback_path: PathBuf) -> Self {
+        Self {
+            account,
+            fallback_path,
+        }
+    }
+
+    fn entry(&self) -> keyring::Result<keyring::Entry> {
+        keyring::Entry::new(SERVICE, self.account)
     }
 
     pub fn load(&self) -> Option<String> {
-        match Self::entry().and_then(|e| e.get_password()) {
+        match self.entry().and_then(|e| e.get_password()) {
             Ok(token) => return Some(token),
             Err(keyring::Error::NoEntry) => {}
             Err(e) => log::warn!("keyring unavailable ({e}); checking fallback file"),
@@ -40,14 +51,15 @@ impl TokenVault {
     }
 
     pub fn save(&self, token: &str) -> std::io::Result<()> {
-        match Self::entry().and_then(|e| e.set_password(token)) {
+        match self.entry().and_then(|e| e.set_password(token)) {
             Ok(()) => {
                 let _ = fs::remove_file(&self.fallback_path);
                 Ok(())
             }
             Err(e) => {
                 log::warn!(
-                    "keyring unavailable ({e}); storing the Google token in {} (owner-only)",
+                    "keyring unavailable ({e}); storing {} in {} (owner-only)",
+                    self.account,
                     self.fallback_path.display()
                 );
                 write_private(&self.fallback_path, token)
@@ -56,9 +68,9 @@ impl TokenVault {
     }
 
     pub fn clear(&self) {
-        match Self::entry().and_then(|e| e.delete_credential()) {
+        match self.entry().and_then(|e| e.delete_credential()) {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => log::warn!("could not remove token from keyring: {e}"),
+            Err(e) => log::warn!("could not remove {} from keyring: {e}", self.account),
         }
         let _ = fs::remove_file(&self.fallback_path);
     }

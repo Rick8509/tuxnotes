@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type BackupView = "home" | "waiting" | "working" | "restore";
+  export type BackupView = "home" | "waiting" | "working" | "restore" | "password" | "restorePassword";
 </script>
 
 <script lang="ts">
@@ -17,11 +17,12 @@
     HardDriveDownload,
     LoaderCircle,
     Lock,
+    LockKeyhole,
   } from "@lucide/svelte";
   import { api, errorText, isTauri } from "../api";
   import { formatBytes, formatRelativeDateTime } from "../format";
   import { app } from "../stores/app.svelte";
-  import type { AutoBackup, BackupInfo, BackupStatus } from "../types";
+  import { BACKUP_PASSWORD_NEEDED, type AutoBackup, type BackupInfo, type BackupStatus } from "../types";
 
   type Intent = "backup" | "restore";
 
@@ -37,10 +38,22 @@
   let listError = $state<string | null>(null);
   let selectedId = $state<string | null>(null);
 
+  // Backup password (encrypting) and the password for restoring an encrypted backup.
+  const MIN_BACKUP_PASSWORD = 8;
+  let pw = $state("");
+  let pw2 = $state("");
+  let pwError = $state("");
+  let pwBusy = $state(false);
+  let restoreTarget = $state<BackupInfo | null>(null);
+
   const available = $derived(!!status && status.clientSource !== "none");
   const message = errorText;
   const details = (b: BackupInfo) =>
-    [b.noteCount != null && `${b.noteCount} note${b.noteCount === 1 ? "" : "s"}`, b.size != null && formatBytes(b.size)]
+    [
+      b.encrypted && "Encrypted",
+      b.noteCount != null && `${b.noteCount} note${b.noteCount === 1 ? "" : "s"}`,
+      b.size != null && formatBytes(b.size),
+    ]
       .filter(Boolean)
       .join(" · ");
   const isCancel = (e: unknown) => message(e).includes("Sign-in cancelled");
@@ -140,18 +153,92 @@
       destructive: true,
     });
     if (!ok) return;
+    if (b.needsPassword) askRestorePassword(b);
+    else await doRestore(b);
+  }
+
+  function askRestorePassword(b: BackupInfo, error = "") {
+    restoreTarget = b;
+    pw = "";
+    pwError = error;
+    view = "restorePassword";
+  }
+
+  async function doRestore(b: BackupInfo, password?: string) {
     await app.flush();
     view = "working";
     workingLabel = "Restoring your notes…";
     try {
-      const result = await api.restoreBackup(b.id);
+      const result = await api.restoreBackup(b.id, password);
       await app.reloadAll();
       app.showInfo(`Restored ${result.noteCount} notes from Google Drive`);
       app.settingsSection = null;
     } catch (e) {
-      app.showError(e);
-      view = "restore";
+      // Encrypted and this computer can't open it, or the typed password was wrong: ask (again).
+      if (message(e) === BACKUP_PASSWORD_NEEDED) askRestorePassword(b);
+      else if (password !== undefined) askRestorePassword(b, message(e));
+      else {
+        app.showError(e);
+        view = "restore";
+      }
+    } finally {
+      pw = "";
     }
+  }
+
+  async function submitRestorePassword(e: SubmitEvent) {
+    e.preventDefault();
+    if (pw && restoreTarget) await doRestore(restoreTarget, pw);
+  }
+
+  // ------------------------------------------------------------ encryption
+
+  function openPassword() {
+    pw = "";
+    pw2 = "";
+    pwError = "";
+    view = "password";
+  }
+
+  async function savePassword(e: SubmitEvent) {
+    e.preventDefault();
+    if (pwBusy || !status) return;
+    if ([...pw].length < MIN_BACKUP_PASSWORD) pwError = `Use at least ${MIN_BACKUP_PASSWORD} characters.`;
+    else if (pw !== pw2) pwError = "The passwords don't match.";
+    else pwError = "";
+    if (pwError) return;
+    const changing = status.encrypted;
+    pwBusy = true;
+    try {
+      status = await api.setBackupPassword(pw);
+      app.showInfo(changing ? "Backup password changed" : "New backups will be encrypted");
+      view = "home";
+    } catch (err) {
+      pwError = message(err);
+    } finally {
+      pwBusy = false;
+      pw = "";
+      pw2 = "";
+    }
+  }
+
+  async function turnOffEncryption() {
+    const ok = await app.confirm({
+      title: "Stop encrypting backups?",
+      message:
+        "New backups will be uploaded without a password. Backups already on Google Drive still need their password to be restored.",
+      confirmLabel: "Turn Off",
+    });
+    if (!ok) return;
+    try {
+      status = await api.setBackupPassword(null);
+    } catch (e) {
+      app.showError(e);
+    }
+  }
+
+  function focus(node: HTMLInputElement) {
+    node.focus();
   }
 
   // ------------------------------------------------------------ the rest
@@ -195,9 +282,9 @@
     }
   }
 
-  async function setPreferences(autoBackup: AutoBackup, keepBackups: number) {
+  async function setPreferences(autoBackup: AutoBackup, keepBackups: number, backupOnClose = status?.backupOnClose ?? true) {
     try {
-      status = await api.setBackupPreferences(autoBackup, keepBackups);
+      status = await api.setBackupPreferences(autoBackup, keepBackups, backupOnClose);
     } catch (e) {
       app.showError(e);
     }
@@ -211,9 +298,12 @@
 
 <div class="panel">
     <header>
-      {#if view === "restore"}
-        <button class="icon-btn back" aria-label="Back" onclick={() => (view = "home")}><ArrowLeft size={16} /></button>
+      {#if view === "restore" || view === "restorePassword"}
+        <button class="icon-btn back" aria-label="Back" onclick={() => (view = view === "restore" ? "home" : "restore")}><ArrowLeft size={16} /></button>
         <h2 id="backup-title">Restore from Google Drive</h2>
+      {:else if view === "password"}
+        <button class="icon-btn back" aria-label="Back" onclick={() => (view = "home")}><ArrowLeft size={16} /></button>
+        <h2 id="backup-title">Encrypt Backups</h2>
       {:else}
         <h2 id="backup-title">Google Drive Backup</h2>
       {/if}
@@ -285,6 +375,42 @@
           <button class="btn primary" disabled={!selectedId} onclick={restoreSelected}>Restore</button>
         </div>
       {/if}
+
+    <!-- ------------------------------------------------ backup password -->
+    {:else if view === "password"}
+      <form class="pw-form" onsubmit={savePassword}>
+        <div class="badge small-badge"><LockKeyhole size={20} /></div>
+        <p>
+          Backups are encrypted on this computer before they're uploaded, so only someone with the password can read
+          them. TuxNotes remembers it here, so automatic backups keep working.
+        </p>
+        <p class="strong">If you forget the password, encrypted backups can't be restored.</p>
+        <input type="password" autocomplete="new-password" placeholder={status.encrypted ? "New backup password" : "Backup password"} aria-label="Backup password" bind:value={pw} disabled={pwBusy} use:focus />
+        <input type="password" autocomplete="new-password" placeholder="Verify" aria-label="Verify backup password" bind:value={pw2} disabled={pwBusy} />
+        <p class="error pw-error" role="alert">{pwError}</p>
+        {#if status.encrypted}
+          <p class="small muted">Backups already on Google Drive keep the password they were made with.</p>
+        {/if}
+        <div class="actions">
+          <button type="button" class="btn" disabled={pwBusy} onclick={() => (view = "home")}>Cancel</button>
+          <button type="submit" class="btn primary" disabled={pwBusy}>
+            {pwBusy ? "Saving…" : status.encrypted ? "Change Password" : "Encrypt Backups"}
+          </button>
+        </div>
+      </form>
+
+    <!-- ------------------------------------------------ password for an encrypted backup -->
+    {:else if view === "restorePassword"}
+      <form class="pw-form" onsubmit={submitRestorePassword}>
+        <div class="badge small-badge"><LockKeyhole size={20} /></div>
+        <p>This backup is encrypted. Enter the password it was made with.</p>
+        <input type="password" autocomplete="current-password" placeholder="Backup password" aria-label="Password for this backup" bind:value={pw} use:focus />
+        <p class="error pw-error" role="alert">{pwError}</p>
+        <div class="actions">
+          <button type="button" class="btn" onclick={() => (view = "restore")}>Back</button>
+          <button type="submit" class="btn primary" disabled={!pw}>Restore</button>
+        </div>
+      </form>
 
     <!-- ------------------------------------------------ not available in this build -->
     {:else if !available}
@@ -363,8 +489,32 @@
             {/if}
           </select>
         </label>
+        <label>
+          <span>Back up when closing TuxNotes</span>
+          <input
+            type="checkbox"
+            class="switch"
+            checked={status.backupOnClose}
+            onchange={(e) => setPreferences(status!.autoBackup, status!.keepBackups, e.currentTarget.checked)}
+          />
+        </label>
+        <div class="pref-row">
+          <span>Encrypt backups <span class="muted">· {status.encrypted ? "On" : "Off"}</span></span>
+          {#if status.encrypted}
+            <span class="pref-actions">
+              <button class="link" onclick={openPassword}>Change Password…</button>
+              <button class="link" onclick={turnOffEncryption}>Turn Off</button>
+            </span>
+          {:else}
+            <button class="btn" onclick={openPassword}>Set Password…</button>
+          {/if}
+        </div>
       </div>
-      <p class="privacy left"><Lock size={12} /> Saved in the “TuxNotes Backups” folder in your Google Drive.</p>
+      <p class="privacy left">
+        <Lock size={12} /> Saved in the “TuxNotes Backups” folder in your Google Drive{status.encrypted
+          ? ", encrypted with your backup password"
+          : ""}.
+      </p>
     {/if}
 </div>
 
@@ -539,11 +689,51 @@
     gap: 8px;
     margin-top: 16px;
   }
-  .prefs label {
+  .prefs label,
+  .pref-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    min-height: 30px;
+  }
+  .pref-actions {
+    display: flex;
+    gap: 12px;
+  }
+
+  /* Password forms */
+  .pw-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pw-form p {
+    margin: 0;
+  }
+  .pw-form .strong {
+    font-weight: 600;
+  }
+  .pw-form input {
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--separator-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-editor);
+    color: var(--text);
+    outline: none;
+  }
+  .pw-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  .pw-error {
+    min-height: 1.3em;
+    font-size: 12px;
+  }
+  .small-badge {
+    width: 40px;
+    height: 40px;
   }
   select {
     height: 30px;

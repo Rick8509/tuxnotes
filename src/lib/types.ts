@@ -75,6 +75,10 @@ export interface BackupStatus {
   keepBackups: number;
   lastBackupAt: number | null;
   lastBackupError: string | null;
+  /** New backups are encrypted with a password. */
+  encrypted: boolean;
+  /** Back up (if anything changed) when TuxNotes closes. */
+  backupOnClose: boolean;
 }
 
 export interface BackupInfo {
@@ -84,7 +88,13 @@ export interface BackupInfo {
   size: number | null;
   noteCount: number | null;
   appVersion: string | null;
+  encrypted: boolean;
+  /** Encrypted with a password this computer doesn't have the key for. */
+  needsPassword: boolean;
 }
+
+/** What `restoreBackup` fails with when the backup's password is needed. */
+export const BACKUP_PASSWORD_NEEDED = "BACKUP_PASSWORD_NEEDED";
 
 export interface RestoreResult {
   noteCount: number;
