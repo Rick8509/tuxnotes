@@ -59,3 +59,12 @@ export function extractText(doc: unknown): ExtractedText {
       .join("\n"),
   };
 }
+
+/** Port of `text::is_blank` in Rust: only empty paragraphs/headings, nothing else. */
+export function isBlank(node: unknown): boolean {
+  if (!node || typeof node !== "object") return true;
+  const n = node as { type?: unknown; text?: unknown; content?: unknown };
+  if (typeof n.type === "string" && !["doc", "paragraph", "heading", "hardBreak"].includes(n.type)) return false;
+  if (n.text !== undefined) return false;
+  return !Array.isArray(n.content) || n.content.every(isBlank);
+}

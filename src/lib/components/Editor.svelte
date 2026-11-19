@@ -5,9 +5,12 @@
   import { TaskItem, TaskList } from "@tiptap/extension-list";
   import { Placeholder } from "@tiptap/extensions";
   import { EditorState } from "@tiptap/pm/state";
-  import { Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
+  import { Maximize2, Minimize2, Pin, PinOff, RotateCcw, SquarePen, Trash2 } from "@lucide/svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { isTauri } from "../api";
   import { formatEditorDate } from "../format";
   import { app } from "../stores/app.svelte";
+  import { ui } from "../stores/ui.svelte";
   import type { DocJSON } from "../types";
   import EditorToolbar from "./EditorToolbar.svelte";
   import WindowControls from "./WindowControls.svelte";
@@ -34,6 +37,33 @@
     },
   });
 
+  // Tab inserts a tab character instead of moving focus out of the note.
+  // Low priority so list items still indent/outdent with Tab first.
+  const TabKey = Extension.create({
+    name: "tuxnotesTab",
+    priority: 50,
+    addKeyboardShortcuts() {
+      return { Tab: () => this.editor.commands.insertContent("\t") };
+    },
+  });
+
+  /** Ctrl+click (or middle-click) a link to open it in the web browser. */
+  function openLink(event: MouseEvent): boolean {
+    const link = (event.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
+    if (!link || !(event.ctrlKey || event.metaKey || event.button === 1)) return false;
+    event.preventDefault();
+    const href = link.href;
+    if (!/^(https?|mailto):/i.test(href)) return true;
+    if (isTauri) openUrl(href).catch((e) => app.showError(`Couldn't open the link: ${e}`));
+    else window.open(href, "_blank", "noopener");
+    return true;
+  }
+
+  /** Clicking the empty space below the text puts the cursor at the end, like Apple Notes. */
+  function onScrollerClick(e: MouseEvent) {
+    if (e.target === scroller && editor?.isEditable) editor.commands.focus("end");
+  }
+
   onMount(() => {
     const ed = new Editor({
       element,
@@ -46,10 +76,15 @@
         TaskItem.configure({ nested: true }),
         Placeholder.configure({ placeholder: "Start writing…" }),
         Shortcuts,
+        TabKey,
       ],
       editable: false,
       editorProps: {
         attributes: { class: "prose", spellcheck: "true", "aria-label": "Note editor" },
+        handleDOMEvents: {
+          click: (_view, event) => openLink(event),
+          auxclick: (_view, event) => openLink(event),
+        },
       },
       onTransaction: () => version++,
       onUpdate: ({ editor: e }) => {
@@ -107,6 +142,17 @@
 
 <main class="editor-pane">
   <header class="header" data-tauri-drag-region>
+    {#if !ui.listVisible && !ui.sidebarShown}
+      <!-- Focus mode: this is the only way back, so it sits where the panes were. -->
+      <button class="icon-btn" title="Show notes list (Ctrl+Alt+F)" aria-label="Exit focus mode" onclick={() => ui.toggleFocus()}>
+        <Minimize2 size={16} />
+      </button>
+    {:else}
+      <button class="icon-btn" title="Focus mode: hide sidebar and notes list (Ctrl+Alt+F)" aria-label="Focus mode" onclick={() => ui.toggleFocus()}>
+        <Maximize2 size={16} />
+      </button>
+    {/if}
+    <span class="divider"></span>
     <EditorToolbar {editor} {version} disabled={readOnly} />
     <div class="spacer" data-tauri-drag-region></div>
     {#if note && !note.deletedAt}
@@ -139,7 +185,8 @@
     </div>
   {/if}
 
-  <div class="scroll" class:hidden={!note} bind:this={scroller}>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="scroll" class:hidden={!note} bind:this={scroller} onclick={onScrollerClick}>
     <div class="date">{note ? formatEditorDate(note.updatedAt) : ""}</div>
     <!-- TipTap owns everything inside this element. -->
     <div bind:this={element}></div>
@@ -157,11 +204,19 @@
 
 <style>
   .editor-pane {
+    grid-column: 3;
     position: relative;
     display: flex;
     flex-direction: column;
-    background: var(--bg-editor);
     min-width: 0;
+    min-height: 0;
+    background: var(--bg-editor);
+  }
+  .divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 6px;
+    background: var(--separator-strong);
   }
   .header {
     height: var(--header-h);
@@ -195,7 +250,9 @@
   }
   .scroll {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0 max(32px, calc((100% - 760px) / 2)) 80px;
     user-select: text;
     -webkit-user-select: text;
@@ -242,6 +299,7 @@
   /* ---------------------------------------------------- note typography */
   .scroll :global(.prose) {
     outline: none;
+    tab-size: 4;
     font-size: 15px;
     line-height: 1.55;
     color: var(--text);
@@ -314,6 +372,7 @@
   }
   .scroll :global(.prose a) {
     color: var(--accent-strong);
+    cursor: text;
   }
   .scroll :global(.prose hr) {
     border: none;

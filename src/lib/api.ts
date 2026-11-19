@@ -55,6 +55,7 @@ export const api = {
   emptyTrash: () => call<number>("empty_trash"),
   trashCount: () => call<number>("trash_count"),
   searchNotes: (query: string) => call<NoteSummary[]>("search_notes", { query }),
+  discardNoteIfBlank: (id: string) => call<boolean>("discard_note_if_blank", { id }),
 
   backupStatus: () => call<BackupStatus>("backup_status"),
   setBackupPreferences: (autoBackup: AutoBackup, keepBackups: number) =>

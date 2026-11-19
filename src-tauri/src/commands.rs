@@ -106,6 +106,11 @@ pub fn trash_count(state: State<'_, AppState>) -> Result<i64> {
 }
 
 #[tauri::command]
+pub fn discard_note_if_blank(state: State<'_, AppState>, id: String) -> Result<bool> {
+    store(&state)?.discard_note_if_blank(&id)
+}
+
+#[tauri::command]
 pub fn search_notes(state: State<'_, AppState>, query: String) -> Result<Vec<NoteSummary>> {
     store(&state)?.search(&query, SEARCH_LIMIT)
 }

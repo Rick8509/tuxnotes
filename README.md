@@ -12,6 +12,8 @@
 - Pinned notes, folders, and **Recently Deleted** (notes are removed permanently after 30 days)
 - Fast full-text search that ignores accents ("cafe" finds "café")
 - **Google Drive backup and restore**: manual or automatic (daily/weekly), keeps the last N backups, and restores on any computer. TuxNotes can only see files it created.
+- Rounded, borderless window. Hide the sidebar, use focus mode to hide both side panes, and drag the dividers to resize them; the window remembers its size and layout
+- Notes grouped like Apple Notes (Pinned, Today, Yesterday, Previous 7 Days, …); drag a note onto a folder to move it
 - Autosave, light and dark themes that follow your system, keyboard-first workflow
 - Small and fast: built with [Tauri](https://tauri.app) and stored in a single SQLite file
 
@@ -26,6 +28,13 @@
 | Checklist | `Ctrl+Shift+L` |
 | Title / Heading / Subheading / Body | `Ctrl+Shift+T` / `H` / `J` / `B` |
 | Bold / Italic / Underline / Strikethrough | `Ctrl+B` / `I` / `U` / `Ctrl+Shift+S` |
+| Show/hide sidebar | `Ctrl+Alt+S` |
+| Focus mode (hide sidebar and note list) | `Ctrl+Alt+F` |
+| Full screen | `F11` |
+| Zoom in / out | `Ctrl+=` / `Ctrl+-` |
+| Open the selected note for typing (in the note list) | `Enter` or `Tab` |
+| Delete the selected note (in the note list) | `Delete` |
+| Open a link in your browser | `Ctrl+click` |
 
 ## Where are my notes?
 

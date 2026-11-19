@@ -29,13 +29,15 @@
   --danger: #d70015;
   --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
 
+  --window-radius: 12px;
+  --window-border: rgba(0, 0, 0, 0.22);
+  --sel-list-inactive: #e6e6e9;
+
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
 
   --header-h: 52px;
-  --sidebar-w: 220px;
-  --list-w: 300px;
 
   color-scheme: light;
 }
@@ -65,6 +67,8 @@
     --separator-strong: #3a3a3d;
 
     --danger: #ff453a;
+    --window-border: rgba(255, 255, 255, 0.14);
+    --sel-list-inactive: #3a3a3c;
     --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
 
     color-scheme: dark;
@@ -85,12 +89,17 @@ body,
   overflow: hidden;
 }
 
+/* The native window is transparent so the app can have rounded corners (see App.svelte). */
+html,
+body {
+  background: transparent;
+}
+
 body {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.4;
   color: var(--text);
-  background: var(--bg-editor);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;

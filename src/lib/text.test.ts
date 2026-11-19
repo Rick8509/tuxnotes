@@ -1,6 +1,6 @@
 // Keep in sync with the Rust tests in crates/tuxnotes-core/src/text.rs.
 import { describe, expect, it } from "vitest";
-import { MAX_TITLE_CHARS, extractText } from "./text";
+import { MAX_TITLE_CHARS, extractText, isBlank } from "./text";
 
 const para = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
 
@@ -53,5 +53,14 @@ describe("extractText", () => {
 
   it("ignores malformed nodes", () => {
     expect(extractText({ type: "doc", content: [42, "x", null, { foo: 1 }, para("ok")] }).title).toBe("ok");
+  });
+});
+
+describe("isBlank", () => {
+  it("matches the Rust rules", () => {
+    expect(isBlank({ type: "doc", content: [{ type: "paragraph" }, { type: "heading" }] })).toBe(true);
+    expect(isBlank({ type: "doc", content: [para(" ")] })).toBe(false);
+    expect(isBlank({ type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", content: [{ type: "paragraph" }] }] }] })).toBe(false);
+    expect(isBlank({ type: "doc", content: [{ type: "horizontalRule" }] })).toBe(false);
   });
 });

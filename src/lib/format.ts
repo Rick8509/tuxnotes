@@ -47,3 +47,37 @@ export function formatBytes(bytes: number): string {
   }
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
+
+/**
+ * Apple-Notes-style section for a note in the list:
+ * "Today", "Yesterday", "Previous 7 Days", "Previous 30 Days",
+ * then the month name for this year ("October") and the year for older notes ("2025").
+ */
+export function dateSection(timestamp: number, now: Date = new Date(), locale?: string): string {
+  const date = new Date(timestamp);
+  const daysAgo = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  if (daysAgo <= 0) return "Today";
+  if (daysAgo === 1) return "Yesterday";
+  if (daysAgo < 7) return "Previous 7 Days";
+  if (daysAgo < 30) return "Previous 30 Days";
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString(locale, { month: "long" });
+  }
+  return String(date.getFullYear());
+}
+
+/** Split an already-sorted list into consecutive sections by `dateSection`. */
+export function groupByDate<T extends { updatedAt: number }>(
+  notes: T[],
+  now: Date = new Date(),
+  locale?: string,
+): { label: string; notes: T[] }[] {
+  const groups: { label: string; notes: T[] }[] = [];
+  for (const note of notes) {
+    const label = dateSection(note.updatedAt, now, locale);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.notes.push(note);
+    else groups.push({ label, notes: [note] });
+  }
+  return groups;
+}

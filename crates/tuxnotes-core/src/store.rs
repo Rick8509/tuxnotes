@@ -347,6 +347,44 @@ impl Store {
         Ok(())
     }
 
+    /// Delete a note that was created but never given any content (like Apple Notes
+    /// does when you leave an empty new note). Returns whether it was deleted.
+    pub fn discard_note_if_blank(&self, id: &str) -> Result<bool> {
+        let row: Option<(String, Option<i64>)> = self
+            .conn
+            .query_row(
+                "SELECT content_json, deleted_at FROM notes WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((json, None)) = row else {
+            return Ok(false); // missing or already in the trash
+        };
+        let doc: Value = serde_json::from_str(&json)?;
+        if !text::is_blank(&doc) {
+            return Ok(false);
+        }
+        self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
+        Ok(true)
+    }
+
+    /// Remove every blank note (run at startup to clean up after an unclean exit).
+    pub fn discard_blank_notes(&self) -> Result<usize> {
+        let ids: Vec<String> = self
+            .conn
+            .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND content_text = ''")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut removed = 0;
+        for id in ids {
+            if self.discard_note_if_blank(&id)? {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Permanently delete everything in "Recently Deleted". Returns the count.
     pub fn empty_trash(&self) -> Result<usize> {
         Ok(self

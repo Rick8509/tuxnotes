@@ -88,6 +88,24 @@ pub fn truncate_chars(s: &str, max: usize) -> String {
     cut
 }
 
+/// True when a document has nothing worth keeping: only empty paragraphs/headings.
+/// Deliberately strict — any text, list, checklist, rule or other node counts as content.
+pub fn is_blank(doc: &Value) -> bool {
+    fn walk(node: &Value) -> bool {
+        match node.get("type").and_then(Value::as_str) {
+            Some("doc" | "paragraph" | "heading" | "hardBreak") | None => {}
+            Some(_) => return false,
+        }
+        if node.get("text").is_some() {
+            return false;
+        }
+        node.get("content")
+            .and_then(Value::as_array)
+            .is_none_or(|children| children.iter().all(walk))
+    }
+    walk(doc)
+}
+
 /// An empty document, used for new notes.
 pub fn empty_doc() -> Value {
     serde_json::json!({ "type": "doc", "content": [{ "type": "paragraph" }] })
@@ -168,6 +186,31 @@ mod tests {
         let out = extract(&json!({ "type": "doc", "content": [para(&long)] }));
         assert_eq!(out.title.chars().count(), MAX_TITLE_CHARS);
         assert!(out.title.ends_with('…'));
+    }
+
+    #[test]
+    fn blank_detection_is_strict() {
+        assert!(is_blank(&empty_doc()));
+        assert!(is_blank(&json!({ "type": "doc", "content": [
+            { "type": "paragraph" },
+            { "type": "heading", "attrs": { "level": 1 } },
+            { "type": "paragraph", "content": [{ "type": "hardBreak" }] },
+        ]})));
+        assert!(
+            !is_blank(&json!({ "type": "doc", "content": [para(" ")] })),
+            "whitespace is kept"
+        );
+        assert!(!is_blank(&json!({ "type": "doc", "content": [para("x")] })));
+        let empty_checklist = json!({ "type": "doc", "content": [{ "type": "taskList", "content": [
+            { "type": "taskItem", "attrs": { "checked": false }, "content": [{ "type": "paragraph" }] }
+        ]}]});
+        assert!(
+            !is_blank(&empty_checklist),
+            "an empty checklist is still content"
+        );
+        assert!(!is_blank(
+            &json!({ "type": "doc", "content": [{ "type": "horizontalRule" }] })
+        ));
     }
 
     #[test]

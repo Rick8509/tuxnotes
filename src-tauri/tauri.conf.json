@@ -17,10 +17,12 @@
         "title": "TuxNotes",
         "width": 1100,
         "height": 720,
-        "minWidth": 720,
-        "minHeight": 480,
+        "minWidth": 640,
+        "minHeight": 420,
         "decorations": false,
-        "transparent": false
+        "transparent": true,
+        "dragDropEnabled": false,
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {
@@ -29,7 +31,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
     "category": "Productivity",
     "shortDescription": "Open notes for Linux",
     "longDescription": "TuxNotes is a lightweight, local-first notes app for Linux with a clean three-pane design, rich text, checklists, fast search and Google Drive backups.",

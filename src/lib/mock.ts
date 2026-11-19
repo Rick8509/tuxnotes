@@ -2,7 +2,7 @@
 // It mirrors the main rules of tuxnotes-core closely enough for UI work; the Rust
 // crate remains the source of truth (and is what the tests cover).
 
-import { extractText } from "./text";
+import { extractText, isBlank } from "./text";
 import type { BackupInfo, BackupStatus, DocJSON, Folder, Note, NoteFilter, NoteSummary } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
@@ -193,6 +193,12 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return before - db.notes.length;
   },
   trash_count: () => db.notes.filter((n) => n.deletedAt !== null).length,
+  discard_note_if_blank: ({ id }) => {
+    const n = db.notes.find((x) => x.id === id);
+    if (!n || n.deletedAt !== null || !isBlank(n.content)) return false;
+    db.notes = db.notes.filter((x) => x.id !== id);
+    return true;
+  },
   search_notes: ({ query }) => {
     const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];

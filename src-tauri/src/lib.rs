@@ -27,6 +27,16 @@ pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()
+        // Must be first: a second launch just focuses the running window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        // Remember window size, position and maximized state between launches.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // ~/.local/share/<identifier>/notes.db and ~/.config/<identifier>/settings.json
@@ -41,6 +51,11 @@ pub fn run() {
                 Ok(0) => {}
                 Ok(n) => log::info!("purged {n} expired note(s) from Recently Deleted"),
                 Err(e) => log::warn!("could not purge expired trash: {e}"),
+            }
+            match store.discard_blank_notes() {
+                Ok(0) => {}
+                Ok(n) => log::info!("removed {n} empty note(s) left from last session"),
+                Err(e) => log::warn!("could not clean up empty notes: {e}"),
             }
             let backup = BackupService::new(
                 data_dir,
@@ -73,6 +88,7 @@ pub fn run() {
             commands::empty_trash,
             commands::trash_count,
             commands::search_notes,
+            commands::discard_note_if_blank,
             commands::backup_status,
             commands::set_backup_preferences,
             commands::set_google_client,

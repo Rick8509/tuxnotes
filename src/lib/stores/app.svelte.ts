@@ -214,6 +214,7 @@ class AppState {
   async setFilter(filter: NoteFilter) {
     await this.flush();
     if (sameFilter(filter, this.filter) && !this.searchResults) return;
+    await this.discardIfLeavingBlank(null);
     this.filter = filter;
     this.clearSearch();
     await this.loadNotes();
@@ -222,6 +223,7 @@ class AppState {
 
   async selectNote(id: string | null) {
     await this.flush();
+    await this.discardIfLeavingBlank(id);
     const token = ++this.loadToken;
     this.selectedId = id;
     if (!id) {
@@ -257,8 +259,28 @@ class AppState {
 
   // ----------------------------------------------------------------- notes
 
+  /**
+   * Like Apple Notes: a note that was created but left without any content is
+   * deleted when you move away from it, instead of cluttering the list.
+   */
+  private async discardIfLeavingBlank(nextId: string | null) {
+    const prev = this.current;
+    // Cheap check first; the backend does the strict "is it really empty" test.
+    if (!prev || prev.id === nextId || prev.deletedAt || prev.title !== "") return;
+    const removed = await this.guard(() => api.discardNoteIfBlank(prev.id));
+    if (!removed) return;
+    this.notes = this.notes.filter((n) => n.id !== prev.id);
+    if (this.searchResults) this.searchResults = this.searchResults.filter((n) => n.id !== prev.id);
+    if (this.current?.id === prev.id) {
+      this.current = null;
+      this.selectedId = null;
+    }
+    await this.refreshCounts();
+  }
+
   async newNote() {
     await this.flush();
+    await this.discardIfLeavingBlank(null);
     if (this.isTrash) {
       this.filter = { kind: "all" };
     }

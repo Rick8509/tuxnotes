@@ -467,3 +467,39 @@ fn note_filter_json_shape() {
     let f: NoteFilter = serde_json::from_str(r#"{"kind":"trash"}"#).unwrap();
     assert_eq!(f, NoteFilter::Trash);
 }
+
+// --------------------------------------------------------- blank-note cleanup
+
+#[test]
+fn blank_notes_are_discarded_but_notes_with_content_are_kept() {
+    let s = store();
+    let blank = s.create_note(None).unwrap();
+    let typed = s.create_note(None).unwrap();
+    s.update_note_content(&typed.id, &doc(&["keep me"]))
+        .unwrap();
+    let checklist = s.create_note(None).unwrap();
+    s.update_note_content(
+        &checklist.id,
+        &json!({ "type": "doc", "content": [{ "type": "taskList", "content": [
+            { "type": "taskItem", "attrs": { "checked": false }, "content": [{ "type": "paragraph" }] }
+        ]}]}),
+    )
+    .unwrap();
+
+    assert!(s.discard_note_if_blank(&blank.id).unwrap());
+    assert!(matches!(s.get_note(&blank.id), Err(Error::NotFound { .. })));
+    assert!(!s.discard_note_if_blank(&typed.id).unwrap());
+    assert!(!s.discard_note_if_blank(&checklist.id).unwrap());
+    assert!(!s.discard_note_if_blank("missing").unwrap());
+
+    // Blank notes in the trash are left alone (they're already on their way out).
+    let trashed = s.create_note(None).unwrap();
+    s.trash_note(&trashed.id).unwrap();
+    assert!(!s.discard_note_if_blank(&trashed.id).unwrap());
+
+    // Startup cleanup.
+    s.create_note(None).unwrap();
+    s.create_note(None).unwrap();
+    assert_eq!(s.discard_blank_notes().unwrap(), 2);
+    assert_eq!(s.list_notes(&NoteFilter::All).unwrap().len(), 2);
+}
