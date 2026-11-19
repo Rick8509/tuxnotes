@@ -427,6 +427,16 @@ impl Store {
         self.get_note_summary(id)
     }
 
+    /// Copy a note (same folder, same content, not pinned). Attachments are shared by id,
+    /// which is safe: they're only removed once no note refers to them.
+    pub fn duplicate_note(&self, id: &str) -> Result<Note> {
+        self.require_active(id)?;
+        let original = self.get_note(id)?;
+        let copy = self.create_note(Some(&original.folder_id))?;
+        self.update_note_content(&copy.id, &original.content)?;
+        self.get_note(&copy.id)
+    }
+
     /// Pinning does not change `updated_at`, matching how Apple Notes behaves.
     pub fn set_note_pinned(&self, id: &str, pinned: bool) -> Result<NoteSummary> {
         self.require_active(id)?;

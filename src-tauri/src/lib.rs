@@ -102,6 +102,7 @@ pub fn run() {
             commands::create_note,
             commands::update_note_content,
             commands::set_note_pinned,
+            commands::duplicate_note,
             commands::move_note,
             commands::trash_note,
             commands::restore_note,

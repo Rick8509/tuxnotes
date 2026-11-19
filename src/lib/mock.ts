@@ -192,6 +192,13 @@ const handlers: Record<string, (a: Args) => unknown> = {
     Object.assign(n, { content: structuredClone(content), ...text, updatedAt: now() });
     return summary(n);
   },
+  duplicate_note: ({ id }) => {
+    const src = active(id);
+    const t = now();
+    const copy: MockNote = { ...structuredClone(src), id: uid(), isPinned: false, createdAt: t, updatedAt: t, deletedAt: null };
+    db.notes.push(copy);
+    return note(copy);
+  },
   set_note_pinned: ({ id, pinned }) => {
     const n = active(id);
     n.isPinned = pinned;

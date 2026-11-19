@@ -8,6 +8,7 @@
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Editor from "./lib/components/Editor.svelte";
   import NoteList from "./lib/components/NoteList.svelte";
+  import NoteInfoDialog from "./lib/components/NoteInfoDialog.svelte";
   import SettingsDialog from "./lib/components/SettingsDialog.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
 
@@ -54,7 +55,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (app.confirmRequest || app.settingsSection) return;
+    if (app.confirmRequest || app.settingsSection || app.showNoteInfo) return;
 
     if (e.key === "F11") {
       e.preventDefault();
@@ -69,6 +70,15 @@
     const mod = e.ctrlKey || e.metaKey;
     if (!mod || e.getModifierState("AltGraph")) return;
     const key = e.key.toLowerCase();
+
+    // Ctrl+Z outside the editor undoes the last delete (while its toast is showing).
+    if (key === "z" && !e.shiftKey && app.toast?.action) {
+      const focused = document.activeElement as HTMLElement | null;
+      if (!focused?.closest(".prose, input, textarea") && app.runToastAction()) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     // Ctrl+Alt: layout shortcuts (like Apple Notes' ⌥⌘S for the sidebar).
     if (e.altKey) {
@@ -135,11 +145,17 @@
   {#if app.settingsSection}
     <SettingsDialog />
   {/if}
+  {#if app.showNoteInfo && app.current}
+    <NoteInfoDialog />
+  {/if}
   <ConfirmDialog />
 
   {#if app.toast}
     <div class="toast" class:info={app.toast.kind === "info"} role={app.toast.kind === "error" ? "alert" : "status"}>
       <span>{app.toast.message}</span>
+      {#if app.toast.action}
+        <button class="toast-action" onclick={() => app.runToastAction()}>{app.toast.action.label}</button>
+      {/if}
       <button aria-label="Dismiss" onclick={() => (app.toast = null)}>✕</button>
     </div>
   {/if}
@@ -224,5 +240,13 @@
   }
   .toast button:hover {
     opacity: 1;
+  }
+  .toast .toast-action {
+    opacity: 1;
+    padding: 2px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-weight: 700;
   }
 </style>

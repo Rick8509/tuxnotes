@@ -384,6 +384,9 @@
       x: r.right - 230,
       y: r.bottom + 4,
       items: [
+        { label: "Duplicate Note", action: () => app.current && app.duplicateNote(app.current.id), disabled: !hasNote || !!app.current?.deletedAt },
+        { label: "Note Info…", action: () => app.flush().then(() => (app.showNoteInfo = true)), disabled: !hasNote },
+        { kind: "separator" },
         { label: "Export as Markdown…", action: exportMarkdown, disabled: !hasNote },
         { label: "Export as PDF…", action: exportPdf, disabled: !hasNote },
         { label: "Print…", action: printNote, disabled: !hasNote },

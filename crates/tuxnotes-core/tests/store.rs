@@ -653,3 +653,31 @@ fn deleting_a_folder_deletes_its_subfolders_and_keeps_their_notes_in_trash() {
         );
     }
 }
+
+// ---------------------------------------------------------------- duplicating
+
+#[test]
+fn duplicating_copies_content_into_the_same_folder() {
+    let s = store();
+    let work = s.create_folder("Work").unwrap();
+    let n = s.create_note(Some(&work.id)).unwrap();
+    s.update_note_content(&n.id, &doc(&["Plan", "details"]))
+        .unwrap();
+    s.set_note_pinned(&n.id, true).unwrap();
+    let copy = s.duplicate_note(&n.id).unwrap();
+    assert_ne!(copy.id, n.id);
+    assert_eq!(copy.folder_id, work.id);
+    assert_eq!(copy.content, s.get_note(&n.id).unwrap().content);
+    assert_eq!(copy.title, "Plan");
+    assert!(!copy.is_pinned, "the copy isn't pinned");
+    assert_eq!(
+        s.search("details", 10).unwrap().len(),
+        2,
+        "both are searchable"
+    );
+    s.trash_note(&n.id).unwrap();
+    assert!(
+        matches!(s.duplicate_note(&n.id), Err(Error::InvalidInput(_))),
+        "notes in the trash can't be duplicated"
+    );
+}

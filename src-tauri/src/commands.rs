@@ -82,6 +82,11 @@ pub fn update_note_content(
 }
 
 #[tauri::command]
+pub fn duplicate_note(state: State<'_, AppState>, id: String) -> Result<Note> {
+    store(&state)?.duplicate_note(&id)
+}
+
+#[tauri::command]
 pub fn set_note_pinned(
     state: State<'_, AppState>,
     id: String,

@@ -142,6 +142,7 @@
         ["Previous / next note", "↑ / ↓"],
         ["Start typing in the note", "Enter or Tab"],
         ["Delete the selected note", "Delete"],
+        ["Undo the delete (while its message shows)", "Ctrl+Z"],
       ],
     },
   ];

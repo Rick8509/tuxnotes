@@ -10,6 +10,12 @@ import { descendantIds } from "../folders";
 const SAVE_DELAY_MS = 400;
 const SEARCH_DELAY_MS = 150;
 
+/** A button on a toast, e.g. "Undo". */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export type SettingsSection = "general" | "appearance" | "backup" | "shortcuts" | "about";
 
 export interface ConfirmRequest {
@@ -53,7 +59,9 @@ class AppState {
   query = $state("");
   searchResults = $state<NoteSummary[] | null>(null);
   /** Bottom-of-window message. Errors stay longer than info messages. */
-  toast = $state<{ kind: "error" | "info"; message: string } | null>(null);
+  toast = $state<{ kind: "error" | "info"; message: string; action?: ToastAction } | null>(null);
+  /** The "Note Info" window is open. */
+  showNoteInfo = $state(false);
   /** Section shown in the Settings window, or null when it's closed. */
   settingsSection = $state<SettingsSection | null>(null);
   confirmRequest = $state<ConfirmRequest | null>(null);
@@ -113,12 +121,21 @@ class AppState {
     console.error(err);
   }
 
-  showInfo(message: string) {
-    this.setToast("info", message, 4000);
+  showInfo(message: string, action?: ToastAction) {
+    this.setToast("info", message, action ? 8000 : 4000, action);
   }
 
-  private setToast(kind: "error" | "info", message: string, ms: number) {
-    this.toast = { kind, message };
+  /** Run the current toast's button (e.g. Undo), if there is one. */
+  runToastAction(): boolean {
+    const action = this.toast?.action;
+    if (!action) return false;
+    this.toast = null;
+    action.run();
+    return true;
+  }
+
+  private setToast(kind: "error" | "info", message: string, ms: number, action?: ToastAction) {
+    this.toast = { kind, message, action };
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toast = null), ms);
   }
@@ -356,11 +373,34 @@ class AppState {
 
   async trashNote(id: string) {
     await this.flush();
-    const ok = await this.guard(() => api.trashNote(id));
-    if (!ok) return;
+    const trashed = await this.guard(() => api.trashNote(id));
+    if (!trashed) return;
     const next = this.removeFromLists(id);
     if (this.selectedId === id) await this.selectNote(next);
     await this.refreshCounts();
+    const title = trashed.title || "New Note";
+    this.showInfo(`“${title}” moved to Recently Deleted`, { label: "Undo", run: () => void this.undoTrash(id) });
+  }
+
+  /** Undo a delete: bring the note back and open it again. */
+  async undoTrash(id: string) {
+    const restored = await this.guard(() => api.restoreNote(id));
+    if (!restored) return;
+    if (this.isTrash) this.filter = { kind: "all" };
+    await this.loadNotes();
+    await this.refreshCounts();
+    await this.selectNote(id);
+  }
+
+  async duplicateNote(id: string) {
+    await this.flush();
+    const copy = await this.guard(() => api.duplicateNote(id));
+    if (!copy) return;
+    this.clearSearch();
+    await this.loadNotes();
+    await this.refreshCounts();
+    await this.selectNote(copy.id);
+    this.showInfo("Note duplicated");
   }
 
   async restoreNote(id: string) {

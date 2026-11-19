@@ -111,6 +111,7 @@
         ]
       : [
           { label: note.isPinned ? "Unpin Note" : "Pin Note", action: () => app.togglePin(note.id) },
+          { label: "Duplicate", action: () => app.duplicateNote(note.id) },
           { kind: "separator" },
           { kind: "heading", label: "Move to" },
           // All folders in tree order; subfolders indented under their parent.

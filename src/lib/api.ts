@@ -53,6 +53,7 @@ export const api = {
     call<NoteSummary>("update_note_content", { id, content }),
   setNotePinned: (id: string, pinned: boolean) =>
     call<NoteSummary>("set_note_pinned", { id, pinned }),
+  duplicateNote: (id: string) => call<Note>("duplicate_note", { id }),
   moveNote: (id: string, folderId: string) => call<NoteSummary>("move_note", { id, folderId }),
   trashNote: (id: string) => call<NoteSummary>("trash_note", { id }),
   restoreNote: (id: string) => call<NoteSummary>("restore_note", { id }),
