@@ -391,7 +391,11 @@ async fn print_to_pdf(window: &WebviewWindow, path: &Path) -> CmdResult<()> {
     window
         .with_webview(move |webview| {
             let settings = gtk::PrintSettings::new();
-            settings.set_printer("Print to File");
+            // GTK names its file printer with its own translation of "Print to File" in the
+            // desktop's language (e.g. German "Ausgabe in Datei"), and the printer is
+            // looked up by that exact name: ask GTK's translations for the same string.
+            let file_printer = gtk::glib::dgettext(Some("gtk30"), "Print to File");
+            settings.set_printer(&file_printer);
             settings.set(gtk::PRINT_SETTINGS_OUTPUT_FILE_FORMAT, Some("pdf"));
             settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
             let op = webkit2gtk::PrintOperation::new(&webview.inner());
