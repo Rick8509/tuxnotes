@@ -41,7 +41,8 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") {
+    // Enter saves from the text fields; on a button it presses that button.
+    if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") {
       e.preventDefault();
       save();
     } else if (e.key === "Escape") {
