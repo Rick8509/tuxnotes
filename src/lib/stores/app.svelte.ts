@@ -542,7 +542,8 @@ class AppState {
     if (!ok) return;
     await this.guard(() => api.emptyTrash());
     await this.loadNotes();
-    await this.selectNote(this.notes[0]?.id ?? null);
+    // Keep the open note, unless it was one of the notes just deleted.
+    if (this.isTrash || this.current?.deletedAt) await this.selectNote(this.notes[0]?.id ?? null);
     await this.refreshCounts();
   }
 
