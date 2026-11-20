@@ -379,6 +379,9 @@ impl BackupService {
             log::warn!("could not revoke Google token: {e}");
         }
         self.forget_account().await;
+        // Signing out on purpose: an old "backup failed" message no longer applies.
+        // (When the sign-in expires instead, that message stays to explain why.)
+        self.settings.update(|s| s.last_backup_error = None);
         Ok(self.status())
     }
 
@@ -440,9 +443,11 @@ impl BackupService {
     }
 
     async fn backup_folder(&self) -> CmdResult<String> {
-        let mut cached = self.folder_id.lock().await;
-        if let Some(id) = cached.as_ref() {
-            return Ok(id.clone());
+        // Never hold the cache lock while talking to Google: when the sign-in turns out
+        // to have expired, `forget_account` clears this cache too and would wait forever.
+        let cached = self.folder_id.lock().await.clone();
+        if let Some(id) = cached {
+            return Ok(id);
         }
         let drive = self.drive();
         let id = self
@@ -451,7 +456,7 @@ impl BackupService {
                 async move { drive.find_or_create_folder(&t, DRIVE_FOLDER_NAME).await }
             })
             .await?;
-        *cached = Some(id.clone());
+        *self.folder_id.lock().await = Some(id.clone());
         Ok(id)
     }
 

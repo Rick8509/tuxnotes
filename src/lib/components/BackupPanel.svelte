@@ -430,6 +430,10 @@
       <div class="hero">
         <div class="badge"><CloudUpload size={28} /></div>
         <h3>Keep your notes safe</h3>
+        {#if status.lastBackupError}
+          <!-- e.g. the Google sign-in expired: backups stopped until you connect again -->
+          <p class="error-box"><CircleAlert size={16} /> {status.lastBackupError}</p>
+        {/if}
         <p>Back up your notes to your own Google Drive and restore them on any computer.</p>
         <button class="btn primary wide" onclick={() => start("backup")}>
           <CloudUpload size={16} /> Back Up to Google Drive
