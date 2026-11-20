@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Security
+- **Restoring a backup** now first checks that it's a believable size, lists no file twice, and fits on the disk with room to spare, so a broken or hostile backup can't fill the disk. The password check accepts at most 256 MB of memory settings (TuxNotes uses 64 MB).
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed

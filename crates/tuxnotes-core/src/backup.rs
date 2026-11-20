@@ -294,6 +294,7 @@ pub fn extract_backup(
     }
     let mut zip = open_archive(archive)?;
     let manifest = read_manifest_from(&mut zip)?;
+    check_restore_size(&manifest, dest_db.parent().and_then(available_space))?;
 
     let result = (|| {
         extract_verified(
@@ -442,6 +443,66 @@ fn read_manifest_from(zip: &mut ZipArchive<File>) -> Result<Manifest> {
     Ok(manifest)
 }
 
+/// Most files a backup may list, and most data it may unpack to.
+const MAX_BACKUP_ENTRIES: usize = 200_000;
+const MAX_BACKUP_TOTAL: u64 = 64 * 1024 * 1024 * 1024;
+/// Disk space to leave free after restoring.
+const FREE_SPACE_MARGIN: u64 = 256 * 1024 * 1024;
+
+/// Before unpacking anything: a believable number of files, none listed twice, and
+/// enough free disk space (`free`, if known) for everything the backup says it holds.
+/// Unpacking checks each file against its listed size, so this bounds the real total.
+fn check_restore_size(manifest: &Manifest, free: Option<u64>) -> Result<()> {
+    if manifest.attachments.len() > MAX_BACKUP_ENTRIES {
+        return Err(Error::InvalidBackup(
+            "This backup lists too many files.".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if !manifest
+        .attachments
+        .iter()
+        .all(|e| seen.insert(e.path.as_str()))
+    {
+        return Err(Error::InvalidBackup(
+            "This backup lists the same file twice.".into(),
+        ));
+    }
+    let total = manifest
+        .attachments
+        .iter()
+        .try_fold(manifest.database_size, |sum, e| sum.checked_add(e.size))
+        .filter(|total| *total <= MAX_BACKUP_TOTAL)
+        .ok_or_else(|| Error::InvalidBackup("This backup is too large to restore.".into()))?;
+    if let Some(free) = free
+        && total.saturating_add(FREE_SPACE_MARGIN) > free
+    {
+        return Err(Error::InvalidBackup(format!(
+            "There isn't enough free disk space to restore this backup (it needs about {:.1} GB).",
+            total as f64 / 1e9
+        )));
+    }
+    Ok(())
+}
+
+/// Free space for the current user on the disk holding `dir`.
+#[cfg(unix)]
+fn available_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `path` is a valid C string and `stats` is a plain struct statvfs fills in.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some(stats.f_bavail as u64 * stats.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn available_space(_dir: &Path) -> Option<u64> {
+    None
+}
+
 fn sha256_file(path: &Path) -> Result<(String, u64)> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
@@ -527,6 +588,63 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manifest(database_size: u64, attachments: Vec<(&str, u64)>) -> Manifest {
+        Manifest {
+            app: BACKUP_APP_ID.into(),
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: "test".into(),
+            schema_version: SCHEMA_VERSION,
+            created_at: 0,
+            folder_count: 1,
+            note_count: 0,
+            database_size,
+            database_sha256: String::new(),
+            attachments: attachments
+                .into_iter()
+                .map(|(path, size)| AttachmentEntry {
+                    path: path.into(),
+                    size,
+                    sha256: String::new(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn restores_are_checked_for_size_duplicates_and_free_space() {
+        const GB: u64 = 1_000_000_000;
+        let ok = manifest(10, vec![("a/x.png", 5), ("b/y.png", 5)]);
+        assert!(check_restore_size(&ok, Some(GB)).is_ok());
+        assert!(
+            check_restore_size(&ok, None).is_ok(),
+            "free space unknown: other checks only"
+        );
+
+        let twice = manifest(10, vec![("a/x.png", 5), ("a/x.png", 5)]);
+        assert!(
+            matches!(check_restore_size(&twice, Some(GB)), Err(Error::InvalidBackup(m)) if m.contains("twice"))
+        );
+
+        let huge = manifest(u64::MAX - 1, vec![("a/x.png", 5)]); // overflows
+        assert!(
+            matches!(check_restore_size(&huge, None), Err(Error::InvalidBackup(m)) if m.contains("too large"))
+        );
+        let big = manifest(MAX_BACKUP_TOTAL + 1, vec![]);
+        assert!(check_restore_size(&big, None).is_err());
+
+        let needs_10_gb = manifest(10 * GB, vec![]);
+        assert!(
+            matches!(check_restore_size(&needs_10_gb, Some(5 * GB)), Err(Error::InvalidBackup(m)) if m.contains("free disk space"))
+        );
+        assert!(check_restore_size(&needs_10_gb, Some(11 * GB)).is_ok());
+    }
+
+    #[test]
+    fn free_space_can_be_measured() {
+        let free = available_space(&std::env::temp_dir());
+        assert!(free.is_some_and(|f| f > 0), "{free:?}");
+    }
 
     #[test]
     fn file_names_use_utc_timestamps() {

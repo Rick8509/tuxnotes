@@ -53,7 +53,9 @@ impl Default for KdfParams {
 impl KdfParams {
     /// Refuse values a damaged or hostile file could use to hang the app or exhaust memory.
     pub fn validate(&self) -> Result<()> {
-        let ok = (8 * 1024..=1024 * 1024).contains(&self.m_kib)
+        // At most 256 MiB: a damaged or hostile backup header (or database) mustn't be
+        // able to make the password check exhaust memory. TuxNotes itself uses 64 MiB.
+        let ok = (8 * 1024..=256 * 1024).contains(&self.m_kib)
             && (1..=10).contains(&self.t)
             && (1..=8).contains(&self.p);
         if ok {
@@ -225,6 +227,10 @@ mod tests {
                 m_kib: u32::MAX,
                 ..FAST
             },
+            KdfParams {
+                m_kib: 512 * 1024,
+                ..FAST
+            },
             KdfParams { t: 0, ..FAST },
             KdfParams { t: 1000, ..FAST },
             KdfParams { p: 0, ..FAST },
@@ -232,5 +238,11 @@ mod tests {
             assert!(derive_key("pw", &[0u8; SALT_LEN], bad).is_err(), "{bad:?}");
         }
         KdfParams::default().validate().unwrap();
+        KdfParams {
+            m_kib: 256 * 1024,
+            ..FAST
+        }
+        .validate()
+        .unwrap();
     }
 }
