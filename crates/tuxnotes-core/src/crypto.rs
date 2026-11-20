@@ -4,9 +4,11 @@
 //!   memory-hungry so that guessing passwords is expensive.
 //! - Data is sealed with **XChaCha20-Poly1305**: authenticated encryption, so a wrong key
 //!   or any change to the data is detected. Its 24-byte nonces are safe to pick at random.
-//! - Keys live in [`Zeroizing`] buffers, which are wiped from memory when dropped.
+//! - Keys live in [`Zeroizing`] buffers, which are wiped from memory when dropped; the
+//!   crypto libraries are built with their "zeroize" feature, so their internal copies
+//!   (cipher keys, Argon2's intermediate hashes) are wiped too.
 
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use zeroize::Zeroizing;
@@ -65,15 +67,15 @@ impl KdfParams {
 /// Derive a key from a password and a random salt.
 pub fn derive_key(password: &str, salt: &[u8], params: KdfParams) -> Result<SecretKey> {
     params.validate()?;
-    let argon = Argon2::new(
-        Algorithm::Argon2id,
-        Version::V0x13,
-        Params::new(params.m_kib, params.t, params.p, Some(KEY_LEN))
-            .map_err(|e| Error::Crypto(e.to_string()))?,
-    );
+    let params = Params::new(params.m_kib, params.t, params.p, Some(KEY_LEN))
+        .map_err(|e| Error::Crypto(e.to_string()))?;
+    // Argon2's working memory (tens of MiB, from which the key could be recomputed) is
+    // ours, so it's wiped afterwards; the library would free its own without wiping.
+    let mut memory = Zeroizing::new(vec![Block::new(); params.block_count()]);
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon
-        .hash_password_into(password.as_bytes(), salt, &mut key[..])
+        .hash_password_into_with_memory(password.as_bytes(), salt, &mut key[..], &mut memory[..])
         .map_err(|e| Error::Crypto(e.to_string()))?;
     Ok(key)
 }
@@ -204,6 +206,15 @@ mod tests {
             hex,
             "4fdbbd2bbe29c3e19838692b12f8bd629277c01e89996c01e8247bd41d3c1f1f"
         );
+    }
+
+    #[test]
+    fn the_libraries_wipe_their_secrets() {
+        // Fails to compile if the crypto libraries lose their "zeroize" feature.
+        fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        wipes_on_drop::<XChaCha20Poly1305>();
+        fn wipeable<T: zeroize::Zeroize>() {}
+        wipeable::<Block>();
     }
 
     #[test]

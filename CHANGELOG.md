@@ -21,6 +21,9 @@ All notable changes to TuxNotes are listed here.
 - Rounded window, hideable sidebar, focus mode, resizable panes, Apple-style date sections, drag notes onto folders, and the window remembers its size.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
+### Security
+- Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
+
 ### Fixed
 - After the computer's clock went backwards (or after restoring notes from a computer whose clock was ahead), **edited notes didn't move to the top** of the list. Edits now always count as newest.
 - **PDF export on computers set to another language** could fail with "printer not found": the built-in PDF printer has a translated name. TuxNotes now asks GTK for that translated name.

@@ -15,6 +15,7 @@ use tuxnotes_core::backup;
 use tuxnotes_core::crypto::{KdfParams, SALT_LEN};
 use tuxnotes_core::encrypted_backup::{self, BackupKey};
 use tuxnotes_gdrive::{DriveClient, LoopbackReceiver, OAuthClient, Pkce, Tokens, random_state};
+use zeroize::Zeroizing;
 
 use crate::AppState;
 use crate::credentials::{BACKUP_KEY_ACCOUNT, TokenVault};
@@ -230,6 +231,7 @@ impl BackupService {
                 self.settings.update(|s| s.backup_encryption = None);
             }
             Some(password) => {
+                let password = Zeroizing::new(password);
                 let encryption = tauri::async_runtime::spawn_blocking(move || {
                     let key = BackupKey::create(&password).map_err(err)?;
                     vault.save(&to_hex(key.key_bytes())).map_err(err)?;
@@ -729,6 +731,7 @@ impl BackupService {
         .await?;
 
         // Decrypt first (if needed), before touching anything.
+        let password = password.map(Zeroizing::new);
         let encryption = self.settings.get().backup_encryption;
         let (vault, download2, archive2) =
             (self.key_vault.clone(), download.clone(), archive.clone());

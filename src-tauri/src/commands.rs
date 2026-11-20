@@ -6,6 +6,7 @@ use std::sync::MutexGuard;
 use serde_json::Value;
 use tauri::State;
 use tuxnotes_core::{Error, Folder, LockStatus, Note, NoteFilter, NoteSummary, Result, Store};
+use zeroize::Zeroizing;
 
 use crate::AppState;
 
@@ -264,6 +265,7 @@ pub fn set_lock_password(
     password: String,
     hint: String,
 ) -> Result<LockStatus> {
+    let password = Zeroizing::new(password);
     let mut store = store(&state)?;
     store.set_lock_password(&password, &hint)?;
     store.lock_status()
@@ -276,6 +278,7 @@ pub fn change_lock_password(
     new_password: String,
     hint: String,
 ) -> Result<LockStatus> {
+    let (old_password, new_password) = (Zeroizing::new(old_password), Zeroizing::new(new_password));
     let mut store = store(&state)?;
     store.change_lock_password(&old_password, &new_password, &hint)?;
     store.lock_status()
@@ -283,6 +286,7 @@ pub fn change_lock_password(
 
 #[tauri::command(async)]
 pub fn unlock_notes(state: State<'_, AppState>, password: String) -> Result<LockStatus> {
+    let password = Zeroizing::new(password);
     let mut store = store(&state)?;
     store.unlock_notes(&password)?;
     store.lock_status()

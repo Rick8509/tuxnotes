@@ -23,8 +23,9 @@ tokio = { version = "1", features = ["net", "io-util", "time", "macros", "sync"]
 url = "2"
 base64 = "0.23"
 getrandom = "0.4"
-argon2 = "0.6"
-chacha20poly1305 = "0.11"
+# "zeroize": the libraries wipe their copies of keys and secret state when done.
+argon2 = { version = "0.6", features = ["zeroize"] }
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
 zeroize = "1"
 wiremock = "0.6"
 
