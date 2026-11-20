@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio::sync::oneshot;
 use tuxnotes_core::Attachment;
 use tuxnotes_core::attachments::{
@@ -142,6 +142,7 @@ fn with_extension(path: PathBuf, ext: &str) -> PathBuf {
     }
 }
 
+/// Ask where to save; returns the path with `filter`'s first extension added if missing.
 async fn ask_save_path(
     app: &AppHandle,
     title: &str,
@@ -157,10 +158,45 @@ async fn ask_save_path(
         .save_file(move |p| {
             let _ = tx.send(p);
         });
-    match rx.await.map_err(err)? {
-        Some(p) => Ok(Some(p.into_path().map_err(err)?)),
-        None => Ok(None),
+    let Some(chosen) = rx.await.map_err(err)? else {
+        return Ok(None);
+    };
+    let (path, ask) = final_save_path(chosen.into_path().map_err(err)?, filter.1[0]);
+    if ask && !confirm_replace(app, &path).await? {
+        return Ok(None);
     }
+    Ok(Some(path))
+}
+
+/// The path to save to (extension added if missing), and whether to ask before replacing:
+/// the file dialog only warned about the name as typed, and with the extension added it
+/// can name a different file that already exists.
+fn final_save_path(chosen: PathBuf, ext: &str) -> (PathBuf, bool) {
+    let path = with_extension(chosen.clone(), ext);
+    let ask = path != chosen && path.exists();
+    (path, ask)
+}
+
+async fn confirm_replace(app: &AppHandle, path: &Path) -> CmdResult<bool> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (tx, rx) = oneshot::channel();
+    app.dialog()
+        .message(format!(
+            "A file named “{name}” already exists in this folder. Replacing it overwrites its contents."
+        ))
+        .title(format!("Replace “{name}”?"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Replace".into(),
+            "Cancel".into(),
+        ))
+        .show(move |replace| {
+            let _ = tx.send(replace);
+        });
+    rx.await.map_err(err)
 }
 
 // ------------------------------------------------------------------ commands
@@ -184,7 +220,6 @@ pub async fn export_markdown(
     else {
         return Ok(None);
     };
-    let path = with_extension(path, "md");
     let folder_name = format!(
         "{} files",
         path.file_stem()
@@ -340,7 +375,6 @@ pub async fn export_pdf(
     else {
         return Ok(None);
     };
-    let path = with_extension(path, "pdf");
     print_to_pdf(&window, &path).await?;
     Ok(Some(path.display().to_string()))
 }
@@ -390,6 +424,30 @@ mod tests {
     use super::*;
 
     const A: &str = "01a1f363-bf56-7331-84f9-eab2eff398df";
+
+    #[test]
+    fn asks_before_replacing_a_file_the_dialog_didnt_warn_about() {
+        let dir = std::env::temp_dir().join(format!("tuxnotes-save-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Notes.md"), "old").unwrap();
+        // Typed "Notes": saving to "Notes.md" would replace a file nobody was warned about.
+        assert_eq!(
+            final_save_path(dir.join("Notes"), "md"),
+            (dir.join("Notes.md"), true)
+        );
+        // Typed "Notes.md": the file dialog already asked.
+        assert_eq!(
+            final_save_path(dir.join("Notes.md"), "md"),
+            (dir.join("Notes.md"), false)
+        );
+        // Nothing there yet: nothing to ask.
+        assert_eq!(
+            final_save_path(dir.join("Other"), "md"),
+            (dir.join("Other.md"), false)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
     const B: &str = "01a1f363-bf56-7331-84f9-eab2eff398e0";
     const C: &str = "01a1f363-bf56-7331-84f9-eab2eff398e1";
 
