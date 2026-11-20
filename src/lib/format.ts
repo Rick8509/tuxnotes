@@ -29,10 +29,11 @@ export function daysUntilPurge(deletedAt: number, now: number = Date.now(), rete
   return Math.max(0, Math.ceil((deletedAt + retentionDays * DAY_MS - now) / DAY_MS));
 }
 
-/** "30 days", "1 day", "0 days" — shown on rows in Recently Deleted. */
+/** "30 days left", "1 day left", "Removed soon" — time until a note in Recently Deleted is removed. */
 export function purgeLabel(deletedAt: number, now: number = Date.now()): string {
   const days = daysUntilPurge(deletedAt, now);
-  return `${days} day${days === 1 ? "" : "s"}`;
+  if (days === 0) return "Removed soon";
+  return `${days} day${days === 1 ? "" : "s"} left`;
 }
 
 /** "512 B", "1.2 MB" … */

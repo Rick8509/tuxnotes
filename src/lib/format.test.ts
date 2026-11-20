@@ -37,9 +37,10 @@ describe("daysUntilPurge", () => {
 
 describe("purgeLabel", () => {
   const day = 24 * 60 * 60 * 1000;
-  it("pluralises", () => {
-    expect(purgeLabel(0, 0)).toBe("30 days");
-    expect(purgeLabel(0, 29.5 * day)).toBe("1 day");
+  it("says how long is left", () => {
+    expect(purgeLabel(0, 0)).toBe("30 days left");
+    expect(purgeLabel(0, 29.5 * day)).toBe("1 day left");
+    expect(purgeLabel(0, 30 * day)).toBe("Removed soon");
   });
 });
 
