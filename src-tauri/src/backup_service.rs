@@ -482,6 +482,15 @@ impl BackupService {
         let sealed = archive.with_extension("zip.enc");
         let _cleanup = RemoveOnDrop(vec![archive.clone(), sealed.clone()]);
         let encryption = self.settings.get().backup_encryption;
+        // Fail closed: a saved backup key means backups are meant to be encrypted, even
+        // if the settings say otherwise (e.g. the settings file was lost or damaged).
+        if encryption.is_none() {
+            let vault = self.key_vault.clone();
+            let key_saved = tauri::async_runtime::spawn_blocking(move || vault.load().is_some())
+                .await
+                .map_err(err)?;
+            check_encryption_settings(encryption.as_ref(), key_saved)?;
+        }
 
         let app2 = app.clone();
         let archive2 = archive.clone();
@@ -772,6 +781,23 @@ impl BackupService {
     }
 }
 
+/// Refuse to upload unencrypted while a backup key is saved: the encryption settings
+/// must have gone missing, and uploading would silently drop the protection.
+fn check_encryption_settings(
+    encryption: Option<&BackupEncryption>,
+    key_saved: bool,
+) -> CmdResult<()> {
+    if encryption.is_none() && key_saved {
+        return Err(
+            "Backups are meant to be encrypted, but this computer's backup settings \
+                    are missing or damaged, so nothing was uploaded. Set the backup password \
+                    again in Settings → Backup."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn encryption_settings(key: &BackupKey) -> BackupEncryption {
     BackupEncryption {
         salt: to_hex(&key.salt),
@@ -889,6 +915,28 @@ pub fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn never_uploads_unencrypted_while_a_backup_key_is_saved() {
+        let enc = BackupEncryption {
+            salt: "00".into(),
+            m_kib: 65536,
+            t: 3,
+            p: 1,
+        };
+        assert!(
+            check_encryption_settings(None, true).is_err(),
+            "settings lost: refuse"
+        );
+        assert!(
+            check_encryption_settings(None, false).is_ok(),
+            "never encrypted"
+        );
+        assert!(
+            check_encryption_settings(Some(&enc), true).is_ok(),
+            "encrypted"
+        );
+    }
 
     #[test]
     fn hex_round_trips_and_rejects_bad_input() {

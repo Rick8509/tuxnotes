@@ -79,12 +79,13 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     /// Load settings, falling back to defaults if the file is missing or unreadable.
+    /// A single bad value (e.g. written by a newer version) only resets that value.
     pub fn load(path: PathBuf) -> Self {
         let current = match fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                log::warn!("settings file is invalid ({e}); using defaults");
-                let _ = fs::rename(&path, path.with_extension("json.invalid"));
-                Settings::default()
+                log::warn!("settings file is invalid ({e}); keeping the values that can be read");
+                let _ = fs::copy(&path, path.with_extension("json.invalid"));
+                parse_leniently(&raw)
             }),
             Err(_) => Settings::default(),
         };
@@ -110,12 +111,45 @@ impl SettingsStore {
     }
 }
 
+/// Settings field by field: any value that can't be read gets its default, the rest
+/// are kept. Unreadable JSON gives all defaults.
+fn parse_leniently(raw: &str) -> Settings {
+    let mut s = Settings::default();
+    let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return s;
+    };
+    fn field<T: serde::de::DeserializeOwned>(
+        obj: &serde_json::Map<String, serde_json::Value>,
+        key: &str,
+        target: &mut T,
+    ) {
+        if let Some(value) = obj.get(key)
+            && let Ok(v) = serde_json::from_value(value.clone())
+        {
+            *target = v;
+        }
+    }
+    field(&obj, "autoBackup", &mut s.auto_backup);
+    field(&obj, "keepBackups", &mut s.keep_backups);
+    field(&obj, "lastBackupAt", &mut s.last_backup_at);
+    field(&obj, "lastBackupError", &mut s.last_backup_error);
+    field(&obj, "googleAccount", &mut s.google_account);
+    field(&obj, "backupEncryption", &mut s.backup_encryption);
+    field(&obj, "backupOnClose", &mut s.backup_on_close);
+    s
+}
+
+/// Write a new file next to the old one, flush it to disk, then swap it in, so a crash
+/// leaves either the old or the new settings, never a half-written file.
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, bytes)?;
+    let mut file = fs::File::create(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     fs::rename(tmp, path)
 }
 
@@ -143,6 +177,22 @@ mod tests {
         fs::write(&path, b"{ not json").unwrap();
         assert_eq!(SettingsStore::load(path.clone()).get(), Settings::default());
         assert!(path.with_extension("json.invalid").exists());
+
+        // One unreadable value (e.g. from a newer version) only resets that value.
+        fs::write(
+            &path,
+            br#"{"autoBackup": "hourly", "keepBackups": 7, "backupOnClose": false,
+                "backupEncryption": {"salt": "00ff", "mKib": 65536, "t": 3, "p": 1}}"#,
+        )
+        .unwrap();
+        let s = SettingsStore::load(path.clone()).get();
+        assert_eq!(s.auto_backup, AutoBackup::Daily, "unknown value → default");
+        assert_eq!((s.keep_backups, s.backup_on_close), (7, false));
+        assert_eq!(
+            s.backup_encryption.map(|e| e.salt).as_deref(),
+            Some("00ff"),
+            "encryption kept"
+        );
 
         // Unknown/missing fields are tolerated (forward/backward compatible).
         fs::write(&path, br#"{"keepBackups": 3, "futureField": true}"#).unwrap();
