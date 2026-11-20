@@ -102,7 +102,14 @@ pub fn sanitize_filename(name: &str) -> String {
             _ => (out.clone(), String::new()),
         };
         let keep = MAX_FILENAME_CHARS - ext.chars().count();
-        out = stem.chars().take(keep).collect::<String>() + &ext;
+        // Trim the cut end too, so cleaning a cleaned name changes nothing.
+        let cut: String = stem.chars().take(keep).collect();
+        let cut = cut.trim_end().trim_end_matches('.').trim_end();
+        out = if cut.is_empty() {
+            "attachment".to_string()
+        } else {
+            cut.to_string()
+        } + &ext;
     }
     if out.ends_with(PARTIAL_SUFFIX) {
         out.push('_');
@@ -433,6 +440,24 @@ mod tests {
         let short = sanitize_filename(&long);
         assert_eq!(short.chars().count(), 120);
         assert!(short.ends_with(".jpeg"));
+    }
+
+    #[test]
+    fn cleaning_a_clean_name_changes_nothing() {
+        let tricky = [
+            format!("{} b{}", "a".repeat(119), "c".repeat(20)), // cut right after a space
+            format!("{}.{}", "a".repeat(119), "c".repeat(20)),  // cut right after a dot
+            format!("{}   x.pdf", "a".repeat(115)),
+            " . spaced . ".to_string(),
+            "x.partial".to_string(),
+            "a:b*c?.txt".to_string(),
+        ];
+        for name in tricky {
+            let once = sanitize_filename(&name);
+            assert_eq!(sanitize_filename(&once), once, "{name:?}");
+            assert!(is_safe_filename(&once), "{once:?}");
+            assert!(!once.ends_with(' ') && !once.ends_with('.'), "{once:?}");
+        }
     }
 
     #[test]

@@ -378,3 +378,33 @@ fn unsafe_file_names_are_never_turned_into_paths() {
         assert!(!is_safe_filename(bad), "{bad:?}");
     }
 }
+
+#[test]
+fn backups_keep_attachments_with_names_from_older_versions() {
+    // Older versions could store a shortened name ending in a space; such files were
+    // silently left out of backups.
+    let dir = tempfile::tempdir().unwrap();
+    let att = dir.path().join("att");
+    let s = Store::open(dir.path().join("live.db")).unwrap();
+    let n = s.create_note(None).unwrap();
+    let id = "01a1f944-5235-7733-80ed-adbe2c772640";
+    let name = format!("{} ", "a".repeat(119));
+    s.conn_for_tests()
+        .execute(
+            "INSERT INTO attachments (id, note_id, filename, mime, size, sha256, created_at)
+             VALUES (?1, ?2, ?3, 'application/octet-stream', 5, '', 0)",
+            [id, n.id.as_str(), name.as_str()],
+        )
+        .unwrap();
+    fs::create_dir_all(att.join(id)).unwrap();
+    fs::write(att.join(id).join(&name), b"hello").unwrap();
+    let content = json!({ "type": "doc", "content": [{ "type": "attachment", "attrs": { "attachmentId": id } }] });
+    s.update_note_content(&n.id, &content).unwrap();
+
+    let zip = dir.path().join("b.zip");
+    let manifest = create_backup(&s, Some(&att), &zip, "test").unwrap();
+    assert_eq!(manifest.attachments.len(), 1, "the file is in the backup");
+    let (db, restored) = (dir.path().join("r.db"), dir.path().join("r-att"));
+    extract_backup(&zip, &db, Some(&restored)).unwrap();
+    assert_eq!(fs::read(restored.join(id).join(&name)).unwrap(), b"hello");
+}

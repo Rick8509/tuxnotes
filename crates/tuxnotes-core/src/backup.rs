@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::attachments::{MAX_ATTACHMENT_BYTES, is_valid_id, sanitize_filename};
+use crate::attachments::{MAX_ATTACHMENT_BYTES, is_safe_filename, is_valid_id};
 use crate::error::{Error, Result};
 use crate::migrations::SCHEMA_VERSION;
 use crate::store::Store;
@@ -265,7 +265,7 @@ fn attachments_in(db: &Path) -> Result<Vec<(String, String)>> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows
         .into_iter()
-        .filter(|(id, name)| is_valid_id(id) && *name == sanitize_filename(name))
+        .filter(|(id, name)| is_valid_id(id) && is_safe_filename(name))
         .collect())
 }
 
@@ -314,7 +314,7 @@ pub fn extract_backup(
             fs::create_dir_all(dir)?;
             for entry in &manifest.attachments {
                 let (id, name) = entry.path.split_once('/').unwrap_or(("", ""));
-                if !is_valid_id(id) || name.is_empty() || name != sanitize_filename(name) {
+                if !is_valid_id(id) || !is_safe_filename(name) {
                     return Err(Error::InvalidBackup(
                         "The backup contains an unsafe attachment path.".into(),
                     ));
