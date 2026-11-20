@@ -486,7 +486,11 @@
       },
       onUpdate: ({ editor: e }) => {
         const id = loadedId;
-        if (id) app.markDirty(id, () => e.getJSON() as DocJSON);
+        // Save this exact document (documents are immutable). Reading the editor later
+        // could save another note's text into this one if the editor switched notes
+        // before the debounced save ran.
+        const doc = e.state.doc;
+        if (id) app.markDirty(id, () => doc.toJSON() as DocJSON);
       },
     });
     editor = ed;
