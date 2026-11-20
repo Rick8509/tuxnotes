@@ -281,14 +281,48 @@
 
   function handlePaste(event: ClipboardEvent): boolean {
     const data = event.clipboardData;
-    const files = [...(data?.files ?? [])];
-    if (files.length === 0) return false;
     // Apps like LibreOffice put a picture of copied text on the clipboard as well;
     // when there's text, paste the text.
     if (data?.getData("text/plain").trim()) return false;
+    const html = data?.getData("text/html") ?? "";
+    // Copied from a note: ProseMirror knows best how to paste its own content.
+    if (html.includes("data-pm-slice")) return false;
+    const files = pastedFiles(data);
+    if (files.length) {
+      event.preventDefault();
+      void addFiles(files);
+      return true;
+    }
+    // WebKitGTK (the engine TuxNotes runs on) doesn't hand pasted images to the page, so a
+    // screenshot or copied picture arrives as an empty paste: read it from the system clipboard.
+    if (!isTauri) return false;
     event.preventDefault();
-    void addFiles(files);
+    void pasteClipboardImage(html);
     return true;
+  }
+
+  /** Files in a paste, from `files` or from `items` (browsers differ in which they fill). */
+  function pastedFiles(data: DataTransfer | null): File[] {
+    const files = [...(data?.files ?? [])];
+    if (files.length) return files;
+    return [...(data?.items ?? [])]
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file);
+  }
+
+  async function pasteClipboardImage(html: string) {
+    const ed = editor;
+    const noteId = loadedId;
+    if (!ed || !noteId || !ed.isEditable) return;
+    try {
+      const attachment = await api.pasteClipboardImage(noteId);
+      if (loadedId !== noteId) return;
+      if (attachment) insertAttachments(ed, [nodeForAttachment(attachment)]);
+      else if (html.trim()) ed.commands.insertContent(html); // no image: paste whatever there was
+    } catch (e) {
+      app.showError(e);
+    }
   }
 
   function handleDrop(view: EditorView, event: DragEvent, moved: boolean): boolean {

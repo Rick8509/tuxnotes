@@ -176,6 +176,69 @@ pub async fn attach_files(app: AppHandle, note_id: String) -> CmdResult<AttachRe
     .map_err(err)?
 }
 
+/// Paste an image from the system clipboard into a note.
+///
+/// WebKitGTK doesn't hand pasted images to the page (the paste event has no files), so
+/// the editor calls this when a paste brings no text. Returns `None` when the clipboard
+/// holds no image.
+#[tauri::command]
+pub async fn paste_clipboard_image(
+    app: AppHandle,
+    note_id: String,
+) -> CmdResult<Option<Attachment>> {
+    let Some(png) = clipboard_image(&app).await? else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let store = state.store.lock().map_err(|_| "note store unavailable")?;
+        store
+            .add_attachment(
+                &state.attachments_dir,
+                Some(&note_id),
+                "Pasted image.png",
+                "image/png",
+                &png,
+            )
+            .map(Some)
+            .map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// The clipboard's image as PNG bytes. GTK's clipboard lives on the main thread.
+#[cfg(target_os = "linux")]
+async fn clipboard_image(app: &AppHandle) -> CmdResult<Option<Vec<u8>>> {
+    use gtk::gdk;
+    let (tx, rx) = oneshot::channel();
+    app.run_on_main_thread(move || {
+        let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+        // Screenshots and browsers offer PNG: keep those bytes as they are.
+        clipboard.request_contents(&gdk::Atom::intern("image/png"), move |clipboard, data| {
+            let png = data.data();
+            if !png.is_empty() {
+                let _ = tx.send(Some(png));
+                return;
+            }
+            // Any other image GTK can read (JPEG, BMP, …): convert it to PNG.
+            clipboard.request_image(move |_, pixbuf| {
+                let _ = tx.send(pixbuf.and_then(|p| p.save_to_bufferv("png", &[]).ok()));
+            });
+        });
+    })
+    .map_err(err)?;
+    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(image) => Ok(image.unwrap_or(None)),
+        Err(_) => Err("Reading the clipboard took too long.".into()),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn clipboard_image(_app: &AppHandle) -> CmdResult<Option<Vec<u8>>> {
+    Ok(None)
+}
+
 /// Open an attachment with the default app for its type.
 #[tauri::command]
 pub fn open_attachment(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {

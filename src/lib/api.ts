@@ -109,6 +109,8 @@ export const api = {
       throw new Error(typeof err === "string" ? err : String((err as Error)?.message ?? err));
     }
   },
+  /** Attach the image on the system clipboard (null if there isn't one). */
+  pasteClipboardImage: (noteId: string) => (isTauri ? call<Attachment | null>("paste_clipboard_image", { noteId }) : Promise.resolve(null)),
   /** Show the file picker and attach the chosen files. */
   attachFiles: (noteId: string) =>
     isTauri ? call<AttachResult>("attach_files", { noteId }) : import("./mock").then((m) => m.mockAttachFiles(noteId)),
