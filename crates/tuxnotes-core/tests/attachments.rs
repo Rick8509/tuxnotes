@@ -408,3 +408,25 @@ fn backups_keep_attachments_with_names_from_older_versions() {
     extract_backup(&zip, &db, Some(&restored)).unwrap();
     assert_eq!(fs::read(restored.join(id).join(&name)).unwrap(), b"hello");
 }
+
+#[test]
+fn files_with_long_non_latin_names_can_be_attached() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open_in_memory().unwrap();
+    let n = s.create_note(None).unwrap();
+    let name = format!("{}.pdf", "会議の議事録".repeat(15)); // 90 characters, 270 bytes
+    let a = s
+        .add_attachment(
+            dir.path(),
+            Some(&n.id),
+            &name,
+            "application/pdf",
+            b"%PDF-1.7",
+        )
+        .unwrap();
+    assert!(a.filename.ends_with(".pdf") && a.filename.starts_with("会議の議事録"));
+    assert_eq!(
+        fs::read(s.attachment_path(dir.path(), &a.id).unwrap()).unwrap(),
+        b"%PDF-1.7"
+    );
+}

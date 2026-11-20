@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- Files with **long Chinese, Japanese and other non-Latin names** couldn't be attached ("file name too long"). Long names are now shortened to fit the file system, keeping the extension.
 - Attachments with very long names could be **left out of backups without a warning**. They're included again, and new long names are shortened cleanly.
 - **Export could overwrite a file without asking**: typing a name without ".md"/".pdf" saved to the name with the extension added, replacing an existing file of that name. TuxNotes now asks "Replace …?" first.
 - **Markdown import**: a picture inside a list, quote, table or heading made the imported note read-only and the picture wasn't attached. Pictures are now attached wherever they are, anything the editor can't show is imported as plain text instead, and a file that fails no longer stops the rest or leaves an empty note behind.

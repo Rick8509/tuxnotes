@@ -23,6 +23,9 @@ pub const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
 /// Unused attachments are only removed after this long, so "undo" still works.
 pub const UNUSED_GRACE_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_FILENAME_CHARS: usize = 120;
+/// File names are also limited in bytes: Linux allows 255, encrypted home folders
+/// (eCryptfs) only 143, and the name gets a ".partial" ending while it's written.
+const MAX_FILENAME_BYTES: usize = 130;
 const PARTIAL_SUFFIX: &str = ".partial";
 
 /// Image types shown inline in notes. Everything else is shown as a file.
@@ -95,21 +98,25 @@ pub fn sanitize_filename(name: &str) -> String {
     } else {
         trimmed.to_string()
     };
-    if out.chars().count() > MAX_FILENAME_CHARS {
+    if out.chars().count() > MAX_FILENAME_CHARS || out.len() > MAX_FILENAME_BYTES {
         // Keep the extension when shortening.
         let (stem, ext) = match out.rfind('.') {
             Some(i) if out.len() - i <= 10 => (out[..i].to_string(), out[i..].to_string()),
             _ => (out.clone(), String::new()),
         };
-        let keep = MAX_FILENAME_CHARS - ext.chars().count();
+        let keep_chars = MAX_FILENAME_CHARS - ext.chars().count();
+        let keep_bytes = MAX_FILENAME_BYTES - ext.len();
+        // Cut between characters, within both limits.
+        let mut cut = String::new();
+        for (n, c) in stem.chars().enumerate() {
+            if n >= keep_chars || cut.len() + c.len_utf8() > keep_bytes {
+                break;
+            }
+            cut.push(c);
+        }
         // Trim the cut end too, so cleaning a cleaned name changes nothing.
-        let cut: String = stem.chars().take(keep).collect();
         let cut = cut.trim_end().trim_end_matches('.').trim_end();
-        out = if cut.is_empty() {
-            "attachment".to_string()
-        } else {
-            cut.to_string()
-        } + &ext;
+        out = if cut.is_empty() { "attachment" } else { cut }.to_string() + &ext;
     }
     if out.ends_with(PARTIAL_SUFFIX) {
         out.push('_');
@@ -440,6 +447,26 @@ mod tests {
         let short = sanitize_filename(&long);
         assert_eq!(short.chars().count(), 120);
         assert!(short.ends_with(".jpeg"));
+    }
+
+    #[test]
+    fn long_names_fit_the_file_system_in_bytes() {
+        for name in [
+            format!("{}.pdf", "漢".repeat(100)), // 3 bytes per character
+            format!("{}.docx", "й".repeat(150)), // 2 bytes per character
+            "😀".repeat(80),                     // 4 bytes, no extension
+        ] {
+            let short = sanitize_filename(&name);
+            assert!(short.len() <= MAX_FILENAME_BYTES, "{} bytes", short.len());
+            assert!(
+                short.len() + PARTIAL_SUFFIX.len() <= 143,
+                "fits eCryptfs while written"
+            );
+            assert_eq!(sanitize_filename(&short), short, "stable");
+            if let Some((_, ext)) = name.rsplit_once('.') {
+                assert!(short.ends_with(&format!(".{ext}")), "{short}");
+            }
+        }
     }
 
     #[test]
