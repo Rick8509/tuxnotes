@@ -87,8 +87,12 @@
   /** Words being searched across all notes, highlighted in the open note. */
   const searchWords = () => (app.searchResults ? app.query.trim() : "");
 
+  /** The search words currently highlighted in the open note. */
+  let highlightedWords = "";
+
   function applySearchHighlight(ed: Editor, scroll: boolean) {
     const words = searchWords();
+    highlightedWords = words;
     setSearch(ed.view, words, "terms");
     const first = getSearch(ed.state)?.matches[0];
     if (words && scroll && first) scrollToPos(ed.view, first.from);
@@ -136,12 +140,14 @@
     if (app.findInNoteTick) untrack(() => void openFind());
   });
 
-  // Search words changed while a note is open: update its highlights.
+  // Search words changed while a note is open: update its highlights. Scroll to the
+  // first match only when the words changed: saving while you type also refreshes the
+  // search results, and that mustn't pull the note back to the top.
   $effect(() => {
     void app.query;
     void app.searchResults;
     const ed = editor;
-    if (ed) untrack(() => !findOpen && applySearchHighlight(ed, true));
+    if (ed) untrack(() => !findOpen && applySearchHighlight(ed, searchWords() !== highlightedWords));
   });
 
   // ------------------------------------------------------------------ links

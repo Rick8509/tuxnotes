@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- While a search was active, typing in a note made it **jump back to the first match** every time it saved. It now only scrolls when the search words change.
 - **Backups larger than 1 GB** uploaded fine but could never be restored. Backups now upload from disk in 8 MB pieces and continue where they stopped after a dropped connection (instead of starting over), restores download straight to disk, and the restore limit is 64 GB. Transfers only time out when they stall, not after 10 minutes.
 - **Restoring a tampered backup** could make TuxNotes delete or read files outside its own folder (attachment records inside a backup weren't checked). Restore now rejects such backups, TuxNotes never builds a path from an unsafe record, and a backup that was uploaded encrypted must still be encrypted when restored.
 - If the settings file was damaged or lost, **backup encryption silently switched off** and the next automatic backup uploaded unencrypted. TuxNotes now refuses to upload while a backup key is saved but the settings don't say "encrypted", and a single unreadable setting only resets that one setting.
