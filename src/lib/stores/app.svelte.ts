@@ -426,6 +426,8 @@ class AppState {
     if (!this.notes.some((n) => n.id === note.id)) this.notes.unshift(toSummary(note));
     this.loadToken++;
     this.selectedId = note.id;
+    // "New notes start with" Heading or Body is kept in the note itself (title is the default).
+    if (prefs.firstLine !== "title") note.content = { ...note.content!, attrs: { firstLine: prefs.firstLine } };
     this.current = note;
     this.focusEditorTick++;
     await this.refreshCounts();

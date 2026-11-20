@@ -211,7 +211,7 @@
           <div class="row">
             <div class="label">
               <span>New notes start with</span>
-              <span class="hint">How the first line of a note looks.</span>
+              <span class="hint">How the first line of new notes looks. Notes you already have keep their look.</span>
             </div>
             <div class="segmented" role="radiogroup" aria-label="New notes start with">
               {#each firstLines as f (f.id)}

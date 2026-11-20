@@ -26,6 +26,7 @@ All notable changes to TuxNotes are listed here.
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed
+- **"New notes start with"** (Settings → General) changed the look of every note, not just new ones. Each note now keeps the first-line style it was created with; notes you already have keep the title look.
 - Moving through the note list with the arrow keys **stopped at every locked note** (its password field took the keyboard). Now Enter or Tab moves into the password field, like into any note, and each locked note's lock screen starts empty.
 - A **collapsed folder's count** now includes the notes in its subfolders (open folders still show their own notes, with the subfolders listed below).
 - The message after locking a note now mentions the **automatic lock after idle time** (Settings → General) instead of only "Lock Now or close".
@@ -58,6 +59,7 @@ All notable changes to TuxNotes are listed here.
 - If a note contains something the running version can't show (for example, a note written by a newer TuxNotes), it opens **read-only** with its text visible, so it can't be overwritten by mistake.
 
 ### Compatibility
+- Notes created with "New notes start with: Heading" or "Body" open read-only in TuxNotes builds from before this version (notes with the default Title look are unaffected).
 - Backups now use **format 2**, which includes attachments. Older backups (format 1) still restore normally.
 - Once this version has opened your notes, its database (schema 4) can't be opened by earlier TuxNotes builds. Update every computer you use.
 - Notes that contain **tables** can't be shown by TuxNotes builds from before table support. Update every computer you use before restoring a backup that contains tables.

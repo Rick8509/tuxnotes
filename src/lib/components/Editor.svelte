@@ -232,6 +232,14 @@
     return true;
   }
 
+  /** A note's JSON for saving. The default first line (title) isn't written, so notes stay
+   *  readable by TuxNotes versions from before the per-note setting. */
+  function noteJSON(doc: { toJSON(): unknown }): DocJSON {
+    const json = doc.toJSON() as DocJSON & { attrs?: { firstLine?: string | null } };
+    if (json.attrs && json.attrs.firstLine == null) delete json.attrs;
+    return json;
+  }
+
   // ------------------------------------------------------------ attachments
 
   /** Upload files and insert them at `pos` (or at the cursor). */
@@ -503,7 +511,7 @@
         // could save another note's text into this one if the editor switched notes
         // before the debounced save ran.
         const doc = e.state.doc;
-        if (id) app.markDirty(id, () => doc.toJSON() as DocJSON);
+        if (id) app.markDirty(id, () => noteJSON(doc));
       },
     });
     editor = ed;
@@ -573,6 +581,11 @@
   });
 
   const note = $derived(app.current);
+  /** How this note's first line looks (chosen when it was created; title by default). */
+  const firstLine = $derived.by(() => {
+    void version;
+    return (editor?.state.doc.attrs.firstLine as string | null) ?? "title";
+  });
   /** A locked note whose content is hidden until the password is entered. */
   const hidden = $derived(!!note && note.content === null);
   const readOnly = $derived(!note || !!note.deletedAt || unsupported || hidden);
@@ -663,7 +676,7 @@
 
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
-    class="scroll first-{prefs.firstLine}"
+    class="scroll first-{firstLine}"
     class:hidden={!note || hidden}
     style:--editor-font-size="{TEXT_SIZE_PX[prefs.textSize]}px"
     bind:this={scroller}
