@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- **Ctrl+Delete while typing** no longer moves the note to Recently Deleted; it deletes the next word, as everywhere else. It still deletes the note when you're not typing.
 - **Pasting images** (screenshots, copied pictures) with Ctrl+V works in the app. The Linux web engine doesn't hand pasted images to the page, so TuxNotes now reads them from the system clipboard.
 
 ### Safety

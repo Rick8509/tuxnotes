@@ -99,7 +99,7 @@
         ["New folder", "Ctrl+Shift+N"],
         ["Find in the open note", "Ctrl+F (in a note)"],
         ["Search all notes", "Ctrl+Shift+F"],
-        ["Delete note", "Ctrl+Delete"],
+        ["Delete note (when not typing)", "Ctrl+Delete"],
         ["Settings", "Ctrl+,"],
         ["Print the open note", "Ctrl+P"],
       ],

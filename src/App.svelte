@@ -104,8 +104,7 @@
 
     // Ctrl+Z outside the editor undoes the last delete (while its toast is showing).
     if (key === "z" && !e.shiftKey && app.toast?.action) {
-      const focused = document.activeElement as HTMLElement | null;
-      if (!focused?.closest(".prose, input, textarea") && app.runToastAction()) {
+      if (!isTyping() && app.runToastAction()) {
         e.preventDefault();
         return;
       }
@@ -148,9 +147,18 @@
         app.focusSearchTick++;
       }
     } else if (e.key === "Delete" && app.selectedId) {
+      // While typing, Ctrl+Delete deletes the next word. The note list handles Delete
+      // itself (and marks the event as handled).
+      if (e.defaultPrevented || isTyping()) return;
       e.preventDefault();
       void app.deleteNote(app.selectedId);
     }
+  }
+
+  /** Focus is in the note or another text field, where keys edit text. */
+  function isTyping(): boolean {
+    const focused = document.activeElement as HTMLElement | null;
+    return !!focused?.closest(".prose, input, textarea, select, [contenteditable='true']");
   }
 
   // Suppress the browser's own context menu except inside the editor (spellcheck, copy/paste).
