@@ -1,5 +1,6 @@
 <script lang="ts">
   // Shown in place of the editor while a locked note is locked.
+  import { onMount, untrack } from "svelte";
   import { LockKeyhole } from "@lucide/svelte";
   import { app } from "../stores/app.svelte";
 
@@ -9,9 +10,16 @@
   let showHint = $state(false);
   let input = $state<HTMLInputElement>();
 
-  // Focus the field when a locked note is opened (not while typing elsewhere).
+  // Don't take the keyboard from the note list (the arrow keys move through notes):
+  // Enter or Tab there moves into the note, here the password field, like for other
+  // notes. With nothing focused (e.g. right after Lock Now), the field gets it.
+  const startTick = untrack(() => app.focusEditorTick);
+  onMount(() => {
+    const focused = document.activeElement;
+    if (!focused || focused === document.body) input?.focus();
+  });
   $effect(() => {
-    if (app.current?.id && !document.activeElement?.closest("input, textarea, .menu")) input?.focus();
+    if (app.focusEditorTick !== startTick) untrack(() => input?.focus());
   });
 
   async function submit(e: SubmitEvent) {

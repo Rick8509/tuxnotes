@@ -568,7 +568,8 @@
 
   $effect(() => {
     const ed = editor;
-    if (app.focusEditorTick && ed) untrack(() => ed.commands.focus("end"));
+    // (A hidden locked note: its lock screen takes the focus instead.)
+    if (app.focusEditorTick && ed) untrack(() => !hidden && ed.commands.focus("end"));
   });
 
   const note = $derived(app.current);
@@ -690,7 +691,10 @@
   </div>
 
   {#if hidden}
-    <LockedNote />
+    <!-- A fresh lock screen for each note: no password or error carried over. -->
+    {#key note?.id}
+      <LockedNote />
+    {/key}
   {/if}
 
   {#if !note}
