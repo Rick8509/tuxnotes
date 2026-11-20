@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { markdownToDoc, noteToMarkdown, resolveImage } from "./markdown";
+import { fitToEditor, markdownToDoc, noteToMarkdown, resolveImage } from "./markdown";
 import type { DocJSON } from "./types";
 
 const t = (text: string, marks?: unknown[]) => ({ type: "text", text, ...(marks ? { marks } : {}) });
@@ -67,6 +67,40 @@ describe("markdownToDoc", () => {
       { type: "image", attrs: { attachmentId: "att-1", alt: "a" } },
       { type: "paragraph", content: [{ type: "text", text: "[image: b]" }] },
     ]);
+  });
+
+  it("lifts images out of lists, quotes, tables and headings so the note is valid", () => {
+    const md = [
+      "- ![in list](a.png)",
+      "- text then ![second](b.png) more",
+      "",
+      "> ![quoted](c.png)",
+      "",
+      "| A |",
+      "|---|",
+      "| ![cell](d.png) |",
+      "",
+      "## Title ![h](e.png)",
+      "",
+      "- [ ] ![task](f.png)",
+    ].join("\n");
+    const { doc, images } = markdownToDoc(md);
+    expect(images.map((i) => i.src)).toEqual(["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"]);
+    // Every image resolves, wherever it is, and the result fits the editor as it is.
+    let out = doc;
+    for (const [n, img] of images.entries()) out = resolveImage(out, img.src, `att-${n}`, img.alt);
+    const json = JSON.stringify(out);
+    for (let n = 0; n < images.length; n++) expect(json).toContain(`"attachmentId":"att-${n}"`);
+    expect(json).not.toContain('"src"');
+    const { fitted } = fitToEditor(out);
+    expect(fitted).toBe(false);
+  });
+
+  it("falls back to plain text when a document doesn't fit the editor", () => {
+    const broken = { type: "doc", content: [{ type: "paragraph", content: [{ type: "image", attrs: { attachmentId: "x" } }, t("hi")] }] } as DocJSON;
+    const { doc, fitted } = fitToEditor(broken);
+    expect(fitted).toBe(true);
+    expect(doc.content).toEqual([p(t("hi"))]);
   });
 
   it("round-trips its own export", () => {

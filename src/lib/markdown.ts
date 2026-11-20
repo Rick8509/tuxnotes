@@ -1,7 +1,10 @@
 // Markdown export and import, using the same content model as the editor.
 
+import { getSchema } from "@tiptap/core";
 import { MarkdownManager } from "@tiptap/markdown";
+import type { Schema } from "@tiptap/pm/model";
 import { contentExtensions } from "./editor/content";
+import { extractText } from "./text";
 import type { DocJSON } from "./types";
 
 type JSONNode = { type?: string; attrs?: Record<string, unknown>; content?: JSONNode[]; text?: string; marks?: unknown[] };
@@ -24,15 +27,22 @@ export interface PendingImage {
   alt: string;
 }
 
+/** Nodes whose children are blocks, so an image block can go there. */
+const CONTAINERS = new Set(["doc", "blockquote", "listItem", "taskItem", "tableCell", "tableHeader"]);
+/** Containers whose first child must be a paragraph. */
+const PARAGRAPH_FIRST = new Set(["listItem", "taskItem"]);
+/** Blocks that hold text (and, in Markdown, inline images). */
+const TEXTBLOCKS = new Set(["paragraph", "heading"]);
+
 /**
- * Markdown → note document. Images are lifted out of paragraphs into their own blocks.
- * Local images are returned in `images` (their nodes keep `src` until attached); images
- * from the web become plain links (nothing is downloaded); data: images are dropped.
+ * Markdown → note document. Images are lifted out of paragraphs and headings into their
+ * own blocks, at any depth (lists, quotes, tables). Local images are returned in `images`
+ * (their nodes keep `src` until attached); images from the web become plain links
+ * (nothing is downloaded); data: images are dropped.
  */
 export function markdownToDoc(markdown: string): { doc: DocJSON; images: PendingImage[] } {
   const parsed = md().parse(markdown) as JSONNode;
   const images: PendingImage[] = [];
-  const blocks: JSONNode[] = [];
 
   /** A web image becomes an inline link; a local one a pending image block; anything else is dropped. */
   const classify = (node: JSONNode): { inline: JSONNode } | { block: JSONNode } | null => {
@@ -46,20 +56,15 @@ export function markdownToDoc(markdown: string): { doc: DocJSON; images: Pending
     return { block: { type: "image", attrs: { src, alt: alt || null } } };
   };
 
-  for (const block of parsed.content ?? []) {
-    const children = block.type === "image" ? [block] : block.type === "paragraph" ? block.content : undefined;
-    if (!children?.some((c) => c.type === "image")) {
-      // Plain text at the top level isn't valid; wrap it.
-      blocks.push(block.type === "text" ? { type: "paragraph", content: [block] } : block);
-      continue;
-    }
-    // Split the paragraph around local images (text, image, text); web images stay inline as links.
+  /** Split a paragraph/heading around its local images (text, image, text). */
+  const split = (block: JSONNode): JSONNode[] => {
+    const out: JSONNode[] = [];
     let run: JSONNode[] = [];
     const flush = () => {
-      if (run.some((c) => c.type !== "text" || (c.text ?? "").trim())) blocks.push({ type: "paragraph", content: run });
+      if (run.some((c) => c.type !== "text" || (c.text ?? "").trim())) out.push({ ...block, content: run });
       run = [];
     };
-    for (const child of children) {
+    for (const child of block.content ?? []) {
       if (child.type !== "image") {
         run.push(child);
         continue;
@@ -68,22 +73,64 @@ export function markdownToDoc(markdown: string): { doc: DocJSON; images: Pending
       if (result && "inline" in result) run.push(result.inline);
       else if (result) {
         flush();
-        blocks.push(result.block);
+        out.push(result.block);
       }
     }
     flush();
-  }
+    return out;
+  };
 
-  return { doc: { type: "doc", content: blocks.length ? blocks : [{ type: "paragraph" }] } as DocJSON, images };
+  const visit = (node: JSONNode): JSONNode => {
+    if (!node.content) return node;
+    if (!CONTAINERS.has(node.type ?? "")) return { ...node, content: node.content.map(visit) };
+    const out: JSONNode[] = [];
+    for (const child of node.content) {
+      if (child.type === "text") {
+        out.push({ type: "paragraph", content: [child] }); // loose text isn't a valid block
+      } else if (child.type === "image") {
+        const result = classify(child);
+        if (result && "block" in result) out.push(result.block);
+        else if (result) out.push({ type: "paragraph", content: [result.inline] });
+      } else if (TEXTBLOCKS.has(child.type ?? "") && child.content?.some((c) => c.type === "image")) {
+        out.push(...split(child));
+      } else {
+        out.push(visit(child));
+      }
+    }
+    if (PARAGRAPH_FIRST.has(node.type ?? "") && out[0]?.type !== "paragraph") out.unshift({ type: "paragraph" });
+    return { ...node, content: out.length ? out : [{ type: "paragraph" }] };
+  };
+
+  return { doc: visit({ ...parsed, type: "doc" }) as DocJSON, images };
 }
 
 /** Replace an imported image's `src` with its attachment (or a text fallback if it couldn't be attached). */
 export function resolveImage(doc: DocJSON, src: string, attachmentId: string | null, alt: string): DocJSON {
-  const content = (doc.content as JSONNode[]).map((node) => {
-    if (node.type !== "image" || node.attrs?.src !== src || node.attrs?.attachmentId) return node;
-    return attachmentId
-      ? { type: "image", attrs: { attachmentId, alt: node.attrs?.alt ?? (alt || null) } }
-      : { type: "paragraph", content: [{ type: "text", text: `[image: ${alt || src}]` }] };
-  });
-  return { ...doc, content } as DocJSON;
+  const visit = (node: JSONNode): JSONNode => {
+    if (node.type === "image" && node.attrs?.src === src && !node.attrs?.attachmentId) {
+      return attachmentId
+        ? { type: "image", attrs: { attachmentId, alt: node.attrs?.alt ?? (alt || null) } }
+        : { type: "paragraph", content: [{ type: "text", text: `[image: ${alt || src}]` }] };
+    }
+    return node.content ? { ...node, content: node.content.map(visit) } : node;
+  };
+  return visit(doc as JSONNode) as DocJSON;
+}
+
+let schema: Schema | null = null;
+
+/**
+ * The document if the editor can show it; otherwise its text as plain paragraphs, so an
+ * import never ends up as a read-only "can't show this" note.
+ */
+export function fitToEditor(doc: DocJSON): { doc: DocJSON; fitted: boolean } {
+  schema ??= getSchema(contentExtensions());
+  try {
+    schema.nodeFromJSON(doc).check();
+    return { doc, fitted: false };
+  } catch {
+    const lines = extractText(doc).plain.split("\n");
+    const content = lines.map((l) => (l ? { type: "paragraph", content: [{ type: "text", text: l }] } : { type: "paragraph" }));
+    return { doc: { type: "doc", content } as DocJSON, fitted: true };
+  }
 }

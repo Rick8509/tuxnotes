@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- **Markdown import**: a picture inside a list, quote, table or heading made the imported note read-only and the picture wasn't attached. Pictures are now attached wherever they are, anything the editor can't show is imported as plain text instead, and a file that fails no longer stops the rest or leaves an empty note behind.
 - Emptying Recently Deleted from the sidebar **switched to a different note**. The open note now stays open (unless it was one of the deleted notes).
 - Pressing Escape on a question inside Settings (for example "Disconnect?") **closed all of Settings** instead of just the question.
 - The app **froze while a backup was being made** (seconds to minutes with many pictures), because notes couldn't be saved until the archive was finished. The notes are now only held for the quick database copy. Pictures and other already-compressed files are stored as they are, which makes backups faster.
