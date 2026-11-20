@@ -499,14 +499,20 @@ impl BackupService {
         let attachments = self.attachments_dir.clone();
         let version = self.app_version.clone();
         let (manifest, changes) = tauri::async_runtime::spawn_blocking(move || {
-            let state = app2.state::<AppState>();
-            let store = state
-                .store
-                .lock()
-                .map_err(|_| "note store unavailable".to_string())?;
-            let manifest = backup::create_backup(&store, Some(&attachments), &archive2, &version)
+            // Hold the store only for the quick database copy; compressing the archive
+            // (minutes with many pictures) mustn't stop notes from being saved.
+            let (snapshot, changes) = {
+                let state = app2.state::<AppState>();
+                let store = state
+                    .store
+                    .lock()
+                    .map_err(|_| "note store unavailable".to_string())?;
+                let snapshot = backup::snapshot_for_backup(&store, &archive2).map_err(err)?;
+                (snapshot, store.change_count())
+            };
+            let manifest = backup::write_backup(snapshot, Some(&attachments), &archive2, &version)
                 .map_err(err)?;
-            Ok::<_, String>((manifest, store.change_count()))
+            Ok::<_, String>((manifest, changes))
         })
         .await
         .map_err(err)??;

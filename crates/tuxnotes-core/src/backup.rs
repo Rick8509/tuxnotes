@@ -77,8 +77,56 @@ pub fn backup_file_name(created_at_ms: i64) -> String {
 /// Write a backup of `store` (and the files in `attachments_dir`, if given) to `dest`,
 /// which must not exist. The archive is written to a temporary file first and renamed
 /// into place, so `dest` is either complete or absent.
+///
+/// Apps should call [`snapshot_for_backup`] while holding their store and
+/// [`write_backup`] after letting go of it; this does both in one go.
 pub fn create_backup(
     store: &Store,
+    attachments_dir: Option<&Path>,
+    dest: &Path,
+    app_version: &str,
+) -> Result<Manifest> {
+    let snapshot = snapshot_for_backup(store, dest)?;
+    write_backup(snapshot, attachments_dir, dest, app_version)
+}
+
+/// The part of a backup that needs the store: a consistent copy of the database plus
+/// what the manifest says about it. Taking it is quick; writing the archive (which can
+/// take minutes with many pictures) doesn't need the store, so notes can still be
+/// saved meanwhile. The copy is deleted when this is dropped.
+pub struct BackupSnapshot {
+    db: PathBuf,
+    folder_count: i64,
+    note_count: i64,
+    schema_version: i64,
+    _cleanup: Cleanup,
+}
+
+/// Take the database copy for a backup that will be written to `dest`.
+pub fn snapshot_for_backup(store: &Store, dest: &Path) -> Result<BackupSnapshot> {
+    if dest.exists() {
+        return Err(Error::invalid(format!(
+            "Backup target already exists: {}",
+            dest.display()
+        )));
+    }
+    let db = sibling(dest, "snapshot.db");
+    let cleanup = Cleanup(vec![db.clone()]);
+    remove_if_exists(&db)?;
+    store.snapshot_to(&db)?;
+    let (folder_count, note_count) = store.counts()?;
+    Ok(BackupSnapshot {
+        db,
+        folder_count,
+        note_count,
+        schema_version: store.schema_version()?,
+        _cleanup: cleanup,
+    })
+}
+
+/// Write the backup archive from a snapshot (no store needed).
+pub fn write_backup(
+    snapshot: BackupSnapshot,
     attachments_dir: Option<&Path>,
     dest: &Path,
     app_version: &str,
@@ -89,68 +137,112 @@ pub fn create_backup(
             dest.display()
         )));
     }
-    let snapshot = sibling(dest, "snapshot.db");
     let partial = sibling(dest, "partial");
-    let _cleanup = Cleanup(vec![snapshot.clone(), partial.clone()]);
-    remove_if_exists(&snapshot)?;
+    let _cleanup = Cleanup(vec![partial.clone()]);
     remove_if_exists(&partial)?;
 
-    store.snapshot_to(&snapshot)?;
-    let (folder_count, note_count) = store.counts()?;
-    let (database_sha256, database_size) = sha256_file(&snapshot)?;
+    let (database_sha256, database_size) = sha256_file(&snapshot.db)?;
     // Attachments listed in the snapshot, so the files match the database exactly.
     let attachment_rows = match attachments_dir {
-        Some(_) => attachments_in(&snapshot)?,
+        Some(_) => attachments_in(&snapshot.db)?,
         None => Vec::new(),
     };
 
     let mut attachments = Vec::new();
-    {
-        let mut zip = ZipWriter::new(File::create(&partial)?);
-        let options = |size: u64| {
-            SimpleFileOptions::default()
-                .compression_method(CompressionMethod::Deflated)
-                .large_file(size >= u32::MAX as u64)
-        };
-        zip.start_file(DATABASE_FILE, options(database_size))?;
-        io::copy(&mut File::open(&snapshot)?, &mut zip)?;
+    let mut zip = ZipWriter::new(File::create(&partial)?);
+    let options = |size: u64, method: CompressionMethod| {
+        SimpleFileOptions::default()
+            .compression_method(method)
+            .large_file(size >= u32::MAX as u64)
+    };
+    zip.start_file(
+        DATABASE_FILE,
+        options(database_size, CompressionMethod::Deflated),
+    )?;
+    io::copy(&mut File::open(&snapshot.db)?, &mut zip)?;
 
-        if let Some(dir) = attachments_dir {
-            for (id, filename) in attachment_rows {
-                // A missing file is skipped rather than failing the whole backup.
-                let Ok(mut file) = File::open(dir.join(&id).join(&filename)) else {
-                    continue;
-                };
-                let path = format!("{id}/{filename}");
-                zip.start_file(format!("{ATTACHMENTS_PREFIX}{path}"), options(0))?;
-                let mut hasher = Sha256::new();
-                let size = io::copy(&mut file, &mut Tee(&mut zip, &mut hasher))?;
-                attachments.push(AttachmentEntry {
-                    path,
-                    size,
-                    sha256: to_hex(&hasher.finalize()),
-                });
-            }
+    if let Some(dir) = attachments_dir {
+        for (id, filename) in attachment_rows {
+            // A missing file is skipped rather than failing the whole backup.
+            let Ok(mut file) = File::open(dir.join(&id).join(&filename)) else {
+                continue;
+            };
+            let path = format!("{id}/{filename}");
+            let method = if already_compressed(&filename) {
+                CompressionMethod::Stored
+            } else {
+                CompressionMethod::Deflated
+            };
+            let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+            zip.start_file(format!("{ATTACHMENTS_PREFIX}{path}"), options(size, method))?;
+            let mut hasher = Sha256::new();
+            let size = io::copy(&mut file, &mut Tee(&mut zip, &mut hasher))?;
+            attachments.push(AttachmentEntry {
+                path,
+                size,
+                sha256: to_hex(&hasher.finalize()),
+            });
         }
-
-        let manifest = Manifest {
-            app: BACKUP_APP_ID.to_string(),
-            format_version: BACKUP_FORMAT_VERSION,
-            app_version: app_version.to_string(),
-            schema_version: store.schema_version()?,
-            created_at: now_ms(),
-            folder_count,
-            note_count,
-            database_size,
-            database_sha256,
-            attachments,
-        };
-        zip.start_file(MANIFEST_FILE, options(0))?;
-        zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
-        zip.finish()?.sync_all()?;
-        fs::rename(&partial, dest)?;
-        Ok(manifest)
     }
+
+    let manifest = Manifest {
+        app: BACKUP_APP_ID.to_string(),
+        format_version: BACKUP_FORMAT_VERSION,
+        app_version: app_version.to_string(),
+        schema_version: snapshot.schema_version,
+        created_at: now_ms(),
+        folder_count: snapshot.folder_count,
+        note_count: snapshot.note_count,
+        database_size,
+        database_sha256,
+        attachments,
+    };
+    zip.start_file(MANIFEST_FILE, options(0, CompressionMethod::Deflated))?;
+    zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
+    zip.finish()?.sync_all()?;
+    fs::rename(&partial, dest)?;
+    Ok(manifest)
+}
+
+/// Pictures, videos and archives barely shrink; storing them as they are is much faster.
+fn already_compressed(filename: &str) -> bool {
+    let ext = filename
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase());
+    matches!(
+        ext.as_deref(),
+        Some(
+            "jpg"
+                | "jpeg"
+                | "png"
+                | "gif"
+                | "webp"
+                | "avif"
+                | "heic"
+                | "heif"
+                | "mp4"
+                | "mov"
+                | "mkv"
+                | "webm"
+                | "mp3"
+                | "m4a"
+                | "ogg"
+                | "opus"
+                | "zip"
+                | "gz"
+                | "xz"
+                | "bz2"
+                | "7z"
+                | "zst"
+                | "docx"
+                | "xlsx"
+                | "pptx"
+                | "odt"
+                | "ods"
+                | "odp"
+                | "epub"
+        )
+    )
 }
 
 /// `(id, filename)` of every attachment recorded in a database file (read-only).

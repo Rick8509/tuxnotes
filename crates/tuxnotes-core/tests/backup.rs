@@ -276,3 +276,64 @@ fn notes_with_tables_save_search_and_survive_backup() {
     );
     assert_eq!(restored.search("finished", 10).unwrap().len(), 1);
 }
+
+#[test]
+fn notes_can_be_saved_while_the_archive_is_written() {
+    use tuxnotes_core::backup::{snapshot_for_backup, write_backup};
+    let dir = tempfile::tempdir().unwrap();
+    let store = sample_store(dir.path());
+    let dest = dir.path().join("b.zip");
+    let note = store.list_notes(&NoteFilter::All).unwrap()[0].clone();
+
+    // The store is only needed for the snapshot; edits after it don't end up in this backup.
+    let snapshot = snapshot_for_backup(&store, &dest).unwrap();
+    store
+        .update_note_content(&note.id, &doc("edited after the snapshot"))
+        .unwrap();
+    let manifest = write_backup(snapshot, None, &dest, "test").unwrap();
+
+    let restored_db = dir.path().join("restored.db");
+    extract_backup(&dest, &restored_db, None).unwrap();
+    let restored = Store::open(&restored_db).unwrap();
+    assert_eq!(restored.get_note(&note.id).unwrap().title, note.title);
+    assert_eq!(manifest.note_count, store.counts().unwrap().1);
+    assert!(
+        !dir.path().join("b.zip.snapshot.db").exists(),
+        "the copy is removed"
+    );
+}
+
+#[test]
+fn pictures_are_stored_as_they_are_and_text_is_compressed() {
+    let dir = tempfile::tempdir().unwrap();
+    let att = dir.path().join("att");
+    fs::create_dir_all(&att).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let n = store.create_note(None).unwrap();
+    let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
+    let pic = store
+        .add_attachment(&att, Some(&n.id), "photo.png", "image/png", &png)
+        .unwrap();
+    let txt = store
+        .add_attachment(&att, Some(&n.id), "notes.txt", "text/plain", &[b'a'; 4000])
+        .unwrap();
+    let content = json!({ "type": "doc", "content": [
+        { "type": "image", "attrs": { "attachmentId": pic.id } },
+        { "type": "attachment", "attrs": { "attachmentId": txt.id } },
+    ] });
+    store.update_note_content(&n.id, &content).unwrap();
+    let dest = dir.path().join("b.zip");
+    create_backup(&store, Some(&att), &dest, "test").unwrap();
+
+    let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+    let method =
+        |zip: &mut zip::ZipArchive<File>, name: String| zip.by_name(&name).unwrap().compression();
+    assert_eq!(
+        method(&mut zip, format!("attachments/{}/photo.png", pic.id)),
+        zip::CompressionMethod::Stored
+    );
+    assert_eq!(
+        method(&mut zip, format!("attachments/{}/notes.txt", txt.id)),
+        zip::CompressionMethod::Deflated
+    );
+}
