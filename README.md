@@ -147,7 +147,7 @@ Push a version tag; GitHub Actions builds the Linux packages and creates a draft
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Bump the version first in `package.json`, `Cargo.toml` (workspace) and `src-tauri/tauri.conf.json`.
+Bump the version first in `package.json` and `Cargo.toml` (workspace); `tauri.conf.json` reads it from `package.json`. A test fails if the two differ, and the release refuses to build when the tag doesn't match the version.
 
 ## Roadmap
 

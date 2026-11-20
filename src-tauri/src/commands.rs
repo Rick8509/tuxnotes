@@ -314,3 +314,19 @@ pub fn lock_note(state: State<'_, AppState>, id: String) -> Result<NoteSummary> 
 pub fn remove_note_lock(state: State<'_, AppState>, id: String) -> Result<NoteSummary> {
     store(&state)?.remove_note_lock(&id)
 }
+
+#[cfg(test)]
+mod tests {
+    /// The app's version comes from package.json (tauri.conf.json points there); the
+    /// Rust crates have their own copy in Cargo.toml, which must stay the same.
+    #[test]
+    fn cargo_and_package_json_versions_match() {
+        let package: serde_json::Value =
+            serde_json::from_str(include_str!("../../package.json")).unwrap();
+        assert_eq!(
+            package["version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION")),
+            "bump the version in package.json and Cargo.toml together"
+        );
+    }
+}

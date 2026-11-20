@@ -26,6 +26,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Check the tag matches the app version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the app version $version (package.json)"
+            exit 1
+          fi
+          cargo test -p tuxnotes cargo_and_package_json_versions_match
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
