@@ -474,7 +474,9 @@ class AppState {
     if (!summary) return;
     this.replaceSummary(summary);
     await this.refreshLock();
-    this.showInfo("Note locked. It stays open until you choose Lock Now or close TuxNotes.");
+    const idle = prefs.autoLockMinutes;
+    const after = idle === 0 ? "" : idle === 60 ? ", after an hour without use" : `, after ${idle} minutes without use`;
+    this.showInfo(`Note locked. It stays open until you choose Lock Now${after} or when TuxNotes closes.`);
   }
 
   async removeLock(id: string) {
