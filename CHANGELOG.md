@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- **A save that failed** (for example on a full disk) was thrown away when you switched notes. Failed saves are now kept, retried by themselves, and retried again with every later save until they succeed.
 - **Search results**: pressing Delete on a result while in Recently Deleted asked to delete it permanently (and then failed); moving a result to another folder made the selection jump. Both now act on the note itself and keep it selected.
 - In the link box, pressing **Enter on Cancel or Remove Link saved the link** instead. Enter now presses the button it's on; in the text fields it still saves.
 - **Automatic backups ran even when nothing had changed**, pushing older, different backups out of the "keep the last N" list, and retried every 15 minutes while offline. They now only run when something changed, and wait longer after each failure (up to 6 hours).

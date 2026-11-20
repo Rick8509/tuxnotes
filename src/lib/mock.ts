@@ -216,6 +216,8 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return note(n);
   },
   update_note_content: ({ id, content }) => {
+    // Browser tests can make saves fail, like a full disk would.
+    if (localStorage.getItem("tuxnotes-mock-fail-saves")) fail("No space left on device (simulated).");
     if (content?.type !== "doc") fail("Note content must be a document.");
     const n = active(id);
     if (n.isLocked) requireUnlocked();

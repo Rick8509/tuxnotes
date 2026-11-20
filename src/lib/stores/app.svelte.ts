@@ -88,6 +88,9 @@ class AppState {
 
   private pending: { id: string; getContent: () => DocJSON } | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Saves that failed, by note: kept and retried so the changes aren't lost. */
+  private unsaved = new Map<string, { content: DocJSON; tries: number }>();
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -230,6 +233,10 @@ class AppState {
   async reloadAll() {
     this.pending = null;
     if (this.saveTimer) clearTimeout(this.saveTimer);
+    // The notes were replaced (e.g. restored): old unsaved changes no longer apply.
+    this.unsaved.clear();
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.clearSearch();
     this.filter = { kind: "all" };
     this.loadToken++;
@@ -259,19 +266,45 @@ class AppState {
     this.saveTimer = setTimeout(() => void this.flush(), SAVE_DELAY_MS);
   }
 
-  /** Save any pending edit immediately. Safe to call at any time. */
+  /** Save any pending edit immediately (and retry earlier saves that failed). */
   async flush() {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
     const pending = this.pending;
-    if (!pending) return;
     this.pending = null;
     // Read the content synchronously, before anything else can change the editor.
-    const content = pending.getContent();
-    const summary = await this.guard(() => api.updateNoteContent(pending.id, content));
-    if (summary) this.replaceSummary(summary);
+    const content = pending?.getContent();
+    for (const [id, failed] of [...this.unsaved]) {
+      if (id !== pending?.id) await this.save(id, failed.content);
+    }
+    if (pending && content) await this.save(pending.id, content);
+  }
+
+  /** Save one note's content. A failure keeps the content and retries it later. */
+  private async save(id: string, content: DocJSON) {
+    try {
+      this.replaceSummary(await api.updateNoteContent(id, content));
+      this.unsaved.delete(id);
+    } catch (err) {
+      const tries = (this.unsaved.get(id)?.tries ?? 0) + 1;
+      this.unsaved.set(id, { content, tries });
+      if (tries === 1) {
+        this.showError(`Couldn't save your changes: ${errorText(err)} TuxNotes will keep trying.`);
+      }
+      this.scheduleRetry(tries);
+    }
+  }
+
+  /** Retry failed saves after 2 s, 5 s, 15 s, 30 s, 60 s (and on every later save). */
+  private scheduleRetry(tries: number) {
+    const delays = [2_000, 5_000, 15_000, 30_000, 60_000];
+    if (this.retryTimer || tries > delays.length) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.flush();
+    }, delays[tries - 1]);
   }
 
   // ----------------------------------------------------------- navigation
