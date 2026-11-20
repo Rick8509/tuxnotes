@@ -376,7 +376,11 @@
     ];
   }
 
-  /** Right-click: actions for images/files and table cells instead of the browser menu. */
+  /**
+   * Right-click: TuxNotes' own menus where there's no text (images and files, a checklist
+   * item's checkbox, a multi-cell table selection). On text the system menu stays, with
+   * spelling suggestions and Cut/Copy/Paste; table actions are also on the toolbar.
+   */
   function openContextMenu(view: EditorView, event: MouseEvent): boolean {
     const ed = editor;
     if (!ed) return false;
@@ -391,7 +395,7 @@
       tableMenu = { x: event.clientX, y: event.clientY, items: ed.isEditable ? items : items.slice(0, 2) };
       return true;
     }
-    if (target.closest('ul[data-type="taskList"]') && ed.isEditable) {
+    if (target.closest('ul[data-type="taskList"] > li > label') && ed.isEditable) {
       const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
       if (!at) return false;
       event.preventDefault();
@@ -420,17 +424,12 @@
     return openTableMenu(view, event);
   }
 
-  /** Right-click inside a table cell: table actions instead of the browser menu. */
-  function openTableMenu(view: EditorView, event: MouseEvent): boolean {
+  /** Right-click on a multi-cell table selection: table actions (merge, etc.). */
+  function openTableMenu(_view: EditorView, event: MouseEvent): boolean {
     const ed = editor;
     const cell = (event.target as HTMLElement).closest("td, th");
-    if (!ed || !cell || !ed.isEditable) return false;
+    if (!ed || !cell || !ed.isEditable || !cell.classList.contains("selectedCell")) return false;
     event.preventDefault();
-    // Act on the right-clicked cell, unless it's part of a multi-cell selection (keep that for "Merge").
-    if (!cell.classList.contains("selectedCell")) {
-      const pos = view.posAtCoords({ left: event.clientX, top: event.clientY });
-      if (pos) ed.chain().focus().setTextSelection(pos.pos).run();
-    }
     tableMenu = { x: event.clientX, y: event.clientY, items: tableMenuItems(ed) };
     return true;
   }

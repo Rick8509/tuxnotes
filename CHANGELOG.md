@@ -26,6 +26,7 @@ All notable changes to TuxNotes are listed here.
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed
+- Right-clicking text inside a **checklist or table** showed only TuxNotes' menu, hiding spelling suggestions and Cut/Copy/Paste. Text now always gets the normal menu; checklist actions are on a right-click of the checkbox, and table actions on the toolbar's table button (or a right-click on selected cells).
 - **"New notes start with"** (Settings → General) changed the look of every note, not just new ones. Each note now keeps the first-line style it was created with; notes you already have keep the title look.
 - Moving through the note list with the arrow keys **stopped at every locked note** (its password field took the keyboard). Now Enter or Tab moves into the password field, like into any note, and each locked note's lock screen starts empty.
 - A **collapsed folder's count** now includes the notes in its subfolders (open folders still show their own notes, with the subfolders listed below).
