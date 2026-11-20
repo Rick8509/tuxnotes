@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- Dropping or pasting a **too-large file together with others hid the "too large" message**. It now stays visible, and files over 50 MB are refused right away instead of being read first.
 - Files with **long Chinese, Japanese and other non-Latin names** couldn't be attached ("file name too long"). Long names are now shortened to fit the file system, keeping the extension.
 - Attachments with very long names could be **left out of backups without a warning**. They're included again, and new long names are shortened cleanly.
 - **Export could overwrite a file without asking**: typing a name without ".md"/".pdf" saved to the name with the extension added, replacing an existing file of that name. TuxNotes now asks "Replace …?" first.

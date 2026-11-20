@@ -5,7 +5,7 @@
 import { extractText, isBlank } from "./text";
 import { registerPreviewUrl } from "./attachmentUrls";
 import type { AttachResult, Attachment, MarkdownFile, BackupInfo, BackupStatus, DocJSON, Folder, LockStatus, Note, NoteFilter, NoteSummary } from "./types";
-import { BACKUP_PASSWORD_NEEDED, IMAGE_MIMES } from "./types";
+import { BACKUP_PASSWORD_NEEDED, IMAGE_MIMES, MAX_ATTACHMENT_BYTES } from "./types";
 
 const STORAGE_KEY = "tuxnotes-mock-v1";
 
@@ -439,7 +439,6 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 // --------------------------------------------------------------- attachments
 // Kept in memory only (object URLs), which is enough for UI work in the browser.
 
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const attachments = new Map<string, { attachment: Attachment; url: string }>();
 
 export async function mockAddAttachment(noteId: string, file: File): Promise<Attachment> {

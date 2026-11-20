@@ -138,3 +138,6 @@ export interface MarkdownFile {
   name: string;
   text: string;
 }
+
+/** Largest file that can be attached (mirrors MAX_ATTACHMENT_BYTES in tuxnotes-core). */
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;

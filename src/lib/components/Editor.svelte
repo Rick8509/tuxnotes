@@ -7,7 +7,7 @@
   import { ChevronDown, ChevronUp, Ellipsis, LockOpen, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
   import LockedNote from "./LockedNote.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { api, isTauri } from "../api";
+  import { api, errorText, isTauri } from "../api";
   import { NOTE_DRAG_TYPE } from "../dnd";
   import { nodeForAttachment } from "../editor/attachmentNodes";
   import { contentExtensions } from "../editor/content";
@@ -21,7 +21,7 @@
   import { app } from "../stores/app.svelte";
   import { prefs, TEXT_SIZE_PX } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
-  import type { DocJSON } from "../types";
+  import { MAX_ATTACHMENT_BYTES, type DocJSON } from "../types";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
   import LinkForm from "./LinkForm.svelte";
@@ -239,20 +239,27 @@
     const ed = editor;
     const noteId = loadedId;
     if (!ed || !noteId || !ed.isEditable || files.length === 0) return;
+    // Too large: say so right away, without reading the file into memory first.
+    const errors = files
+      .filter((f) => f.size > MAX_ATTACHMENT_BYTES)
+      .map((f) => `“${f.name}” is too large to attach (the limit is ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB).`);
+    files = files.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
     const big = files.some((f) => f.size > 2 * 1024 * 1024);
-    if (big) app.showInfo(files.length === 1 ? `Adding “${files[0].name}”…` : `Adding ${files.length} files…`);
+    const adding = files.length === 1 ? `Adding “${files[0].name}”…` : `Adding ${files.length} files…`;
+    if (big) app.showInfo(adding);
     const nodes = [];
     for (const file of files) {
       try {
         nodes.push(nodeForAttachment(await api.addAttachment(noteId, file)));
       } catch (e) {
-        app.showError(e);
+        errors.push(errorText(e));
       }
     }
     // If the user switched notes meanwhile, don't insert into the wrong one.
-    if (nodes.length === 0 || loadedId !== noteId) return;
-    insertAttachments(ed, nodes, pos);
-    if (big) app.toast = null;
+    if (nodes.length && loadedId === noteId) insertAttachments(ed, nodes, pos);
+    // Errors replace the "Adding…" message (shown last, so nothing hides them).
+    if (errors.length) app.showError(errors.join(" "));
+    else if (big && app.toast?.message === adding) app.toast = null;
   }
 
   /**
