@@ -456,10 +456,15 @@ class AppState {
     await this.flush();
     const updated = await this.guard(() => api.moveNote(id, folderId));
     if (!updated) return;
-    if (this.filter.kind === "folder" && this.filter.folderId !== folderId) {
+    if (this.filter.kind === "folder" && this.filter.folderId !== folderId && !this.searchResults) {
       const next = this.removeFromLists(id);
       if (this.selectedId === id) await this.selectNote(next);
     } else {
+      // Search results span all folders, so the note stays in them (and selected);
+      // only the folder list behind the search loses it.
+      if (this.filter.kind === "folder" && this.filter.folderId !== folderId) {
+        this.notes = this.notes.filter((n) => n.id !== id);
+      }
       this.replaceSummary(updated);
     }
     await this.refreshCounts();
@@ -526,7 +531,10 @@ class AppState {
 
   /** Delete from the current view: to trash normally, permanently when already in trash. */
   async deleteNote(id: string) {
-    if (this.isTrash) await this.deleteNoteForever(id);
+    // Decide by the note, not the view: search results inside Recently Deleted are
+    // ordinary notes, which go to Recently Deleted rather than being deleted for good.
+    const note = this.visibleNotes.find((n) => n.id === id) ?? (this.current?.id === id ? this.current : null);
+    if (note ? note.deletedAt : this.isTrash) await this.deleteNoteForever(id);
     else await this.trashNote(id);
   }
 
