@@ -130,14 +130,17 @@ src/                    Svelte 5 + TipTap user interface
 
 ## Development checks
 
-Run these before committing. CI runs the same checks on every pull request.
+Run these before committing. CI runs the same checks on every push to `dev` and `main` and on pull requests.
 
 ```bash
 cargo fmt --all                   # format Rust code
 cargo test --workspace            # storage, Drive client and app tests
 cargo clippy --workspace --all-targets -- -D warnings
 npm run check && npm test         # typecheck + frontend unit tests
+npm run test:e2e                  # browser tests (tests/e2e) against the browser preview
 ```
+
+The browser tests drive the app in Google Chrome or Chromium with the mock backend (`src/lib/mock.ts`). Set `CHROME=/path/to/chrome` if it isn't found, and `npm run test:e2e -- ctrl-delete` runs only the matching test files.
 
 ## Releasing
 

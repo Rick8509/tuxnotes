@@ -41,6 +41,19 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  e2e:
+    name: Browser tests (tests/e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # GitHub's Ubuntu runners come with Google Chrome.
+      - run: npm run test:e2e
+
   app:
     name: App (Tauri build check)
     runs-on: ubuntu-22.04
