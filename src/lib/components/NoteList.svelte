@@ -46,6 +46,10 @@
   const showFolderName = $derived(!!app.searchResults || app.filter.kind === "all");
 
   function onListKey(e: KeyboardEvent) {
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      if (noteMenuFromKeyboard()) e.preventDefault();
+      return;
+    }
     const idx = ordered.findIndex((n) => n.id === app.selectedId);
     switch (e.key) {
       case "ArrowDown":
@@ -102,6 +106,20 @@
 
   function noteMenu(e: MouseEvent, note: NoteSummary) {
     e.preventDefault();
+    openNoteMenu(note, e.clientX, e.clientY);
+  }
+
+  /** The selected note's menu, from the keyboard (Menu key or Shift+F10). */
+  function noteMenuFromKeyboard(): boolean {
+    const note = ordered.find((n) => n.id === app.selectedId);
+    const row = note && listEl?.querySelector<HTMLElement>(`.note[data-id="${note.id}"]`);
+    if (!note || !row) return false;
+    const r = row.getBoundingClientRect();
+    openNoteMenu(note, r.left + 24, r.top + r.height / 2);
+    return true;
+  }
+
+  function openNoteMenu(note: NoteSummary, x: number, y: number) {
     if (app.selectedId !== note.id) app.selectNote(note.id);
     const items: MenuItem[] = note.deletedAt
       ? [
@@ -126,7 +144,7 @@
           { kind: "separator" },
           { label: "Delete", action: () => app.trashNote(note.id), danger: true },
         ];
-    menu = { x: e.clientX, y: e.clientY, items };
+    menu = { x, y, items };
   }
 </script>
 

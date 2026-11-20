@@ -22,6 +22,7 @@
   import { prefs, TEXT_SIZE_PX } from "../stores/prefs.svelte";
   import { ui } from "../stores/ui.svelte";
   import { MAX_ATTACHMENT_BYTES, type DocJSON } from "../types";
+  import { visibleRows } from "../folders";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
   import LinkForm from "./LinkForm.svelte";
@@ -434,6 +435,22 @@
     return true;
   }
 
+  /** "Move to Folder…" from the ⋯ menu: the folder tree as a second menu. */
+  function openMoveMenu(noteId: string, folderId: string, r: DOMRect) {
+    tableMenu = {
+      x: r.right - 230,
+      y: r.bottom + 4,
+      items: [
+        { kind: "heading", label: "Move to" },
+        ...visibleRows(app.folders).map(({ folder: f, depth }) => ({
+          label: `${"\u2003".repeat(depth)}${f.name}`,
+          action: () => app.moveNote(noteId, f.id),
+          disabled: f.id === folderId,
+        })),
+      ],
+    };
+  }
+
   /** "⋯" button: export, print and import. */
   function openMoreMenu(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -449,6 +466,9 @@
           ? { label: "Remove Lock", action: () => app.removeLock(cur.id), disabled: !active }
           : { label: "Lock Note…", action: () => cur && app.lockNote(cur.id), disabled: !active },
         ...(app.lock.unlocked ? [{ label: "Lock Now", action: () => app.lockNow() }] : []),
+        { kind: "separator" },
+        { label: cur?.isPinned ? "Unpin Note" : "Pin Note", action: () => cur && app.togglePin(cur.id), disabled: !active },
+        { label: "Move to Folder…", action: () => cur && openMoveMenu(cur.id, cur.folderId, r), disabled: !active },
         { kind: "separator" },
         { label: "Duplicate Note", action: () => cur && app.duplicateNote(cur.id), disabled: !active || !!cur?.isLocked },
         { label: "Note Info…", action: () => app.flush().then(() => (app.showNoteInfo = true)), disabled: !visible },

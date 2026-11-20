@@ -17,6 +17,8 @@
   let { x, y, items, onclose }: Props = $props();
 
   let menu: HTMLDivElement;
+  /** Where the keyboard was before the menu opened (Escape goes back there). */
+  const returnFocus = document.activeElement as HTMLElement | null;
   let pos = $state({ left: 0, top: 0 });
 
   onMount(async () => {
@@ -40,6 +42,7 @@
     if (e.key === "Escape") {
       e.preventDefault();
       onclose();
+      returnFocus?.focus();
       return;
     }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

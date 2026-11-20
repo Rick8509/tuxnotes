@@ -181,7 +181,13 @@
 <svelte:window {onkeydown} {oncontextmenu} bind:innerWidth={ui.windowWidth} />
 
 <div class="frame" class:edge-to-edge={ui.edgeToEdge}>
-  <div class="app" class:animate={!ui.resizing} style:grid-template-columns={ui.columns}>
+  <!-- While a dialog is open, the app behind it can't be reached (Tab stays in the dialog). -->
+  <div
+    class="app"
+    class:animate={!ui.resizing}
+    style:grid-template-columns={ui.columns}
+    inert={!!(app.settingsSection || app.confirmRequest || app.lockPrompt || app.showNoteInfo)}
+  >
     <Sidebar />
     <NoteList />
     <Editor />
