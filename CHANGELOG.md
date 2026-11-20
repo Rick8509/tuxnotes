@@ -21,6 +21,9 @@ All notable changes to TuxNotes are listed here.
 - Rounded window, hideable sidebar, focus mode, resizable panes, Apple-style date sections, drag notes onto folders, and the window remembers its size.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
+### Fixed
+- **Pasting images** (screenshots, copied pictures) with Ctrl+V works in the app. The Linux web engine doesn't hand pasted images to the page, so TuxNotes now reads them from the system clipboard.
+
 ### Safety
 - If a note contains something the running version can't show (for example, a note written by a newer TuxNotes), it opens **read-only** with its text visible, so it can't be overwritten by mistake.
 
