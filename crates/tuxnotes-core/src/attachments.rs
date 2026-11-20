@@ -64,6 +64,19 @@ pub fn is_valid_id(id: &str) -> bool {
     id.len() == 36 && Uuid::parse_str(id).is_ok()
 }
 
+/// Whether a stored file name is safe to use as one path component inside an
+/// attachment's folder. Records from a restored backup are checked with this, so a
+/// tampered backup can't point TuxNotes at files elsewhere on the computer.
+pub fn is_safe_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && name != "."
+        && name != ".."
+        && !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c.is_control())
+}
+
 /// Make a file name safe to use as a single path component, keeping it readable.
 pub fn sanitize_filename(name: &str) -> String {
     // Only the last component of anything path-like.
@@ -302,7 +315,25 @@ impl Store {
     /// Where an attachment's file lives on disk.
     pub fn attachment_path(&self, dir: &Path, id: &str) -> Result<PathBuf> {
         let a = self.get_attachment(id)?;
+        if !is_valid_id(&a.id) || !is_safe_filename(&a.filename) {
+            return Err(Error::invalid("This attachment's record is damaged."));
+        }
         Ok(dir.join(&a.id).join(&a.filename))
+    }
+
+    /// Fail if any attachment record has an invalid id or an unsafe file name (checked
+    /// when restoring a backup, before it replaces the notes).
+    pub fn check_attachment_records(&self) -> Result<()> {
+        let bad = self
+            .list_attachments()?
+            .into_iter()
+            .any(|a| !is_valid_id(&a.id) || !is_safe_filename(&a.filename));
+        if bad {
+            return Err(Error::InvalidBackup(
+                "The backup contains invalid attachment records, so it wasn't restored.".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn list_attachments(&self) -> Result<Vec<Attachment>> {
@@ -349,6 +380,10 @@ impl Store {
         let mut removed = 0;
         let mut known = HashSet::new();
         for a in self.list_attachments()? {
+            // Only ever delete folders named by a real attachment id inside `dir`.
+            if !is_valid_id(&a.id) {
+                continue;
+            }
             if referenced.contains(&a.id) || a.created_at > cutoff {
                 known.insert(a.id);
                 continue;

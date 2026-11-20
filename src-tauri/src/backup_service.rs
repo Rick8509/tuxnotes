@@ -656,6 +656,16 @@ impl BackupService {
         password: Option<String>,
     ) -> CmdResult<RestoreResult> {
         let (_lock, _busy) = self.begin(Busy::Restoring)?;
+        // What TuxNotes recorded about this backup when uploading it (Drive keeps these
+        // properties private to TuxNotes). An encrypted backup must still be encrypted.
+        let folder = self.backup_folder().await?;
+        let expect_encrypted = self
+            .list_in(&folder)
+            .await?
+            .into_iter()
+            .find(|b| b.id == file_id)
+            .ok_or("This backup wasn't found in the TuxNotes Backups folder.")?
+            .encrypted;
         let drive = self.drive();
         let bytes = self
             .with_token(|t| {
@@ -685,6 +695,13 @@ impl BackupService {
             (self.key_vault.clone(), download.clone(), archive.clone());
         let adopt = tauri::async_runtime::spawn_blocking(move || {
             let Some(header) = encrypted_backup::read_header(&download2).map_err(err)? else {
+                if expect_encrypted {
+                    return Err(
+                        "This backup should be encrypted but isn't. It may have been \
+                                changed by someone else, so it wasn't restored."
+                            .to_string(),
+                    );
+                }
                 fs::rename(&download2, &archive2).map_err(err)?;
                 return Ok::<_, String>(None);
             };

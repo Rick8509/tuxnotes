@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- **Restoring a tampered backup** could make TuxNotes delete or read files outside its own folder (attachment records inside a backup weren't checked). Restore now rejects such backups, TuxNotes never builds a path from an unsafe record, and a backup that was uploaded encrypted must still be encrypted when restored.
 - If the settings file was damaged or lost, **backup encryption silently switched off** and the next automatic backup uploaded unencrypted. TuxNotes now refuses to upload while a backup key is saved but the settings don't say "encrypted", and a single unreadable setting only resets that one setting.
 - When the Google sign-in had expired, backing up (or opening Restore) **hung until TuxNotes was restarted**, and closing the window waited 90 seconds. TuxNotes now disconnects cleanly and the Backup settings say the sign-in expired.
 - An edit that landed at the moment you switched notes (for example a pasted picture finishing) could be saved with the **other note's text**, replacing the first note's content. Each save now stores exactly the text it was made from.

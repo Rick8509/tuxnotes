@@ -215,6 +215,7 @@ pub fn extract_backup(
         // Opening runs migrations, so older backups are upgraded here.
         let restored = Store::open(dest_db)?;
         restored.check_integrity()?;
+        restored.check_attachment_records()?;
         drop(restored);
 
         if let Some(dir) = dest_attachments {

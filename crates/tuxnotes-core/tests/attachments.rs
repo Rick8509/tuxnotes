@@ -263,3 +263,118 @@ fn rewrite_manifest(path: &std::path::Path, edit: impl FnOnce(&mut Value)) {
     out.finish().unwrap();
     fs::rename(tmp, path).unwrap();
 }
+
+// ------------------------------------------------- records from a tampered backup
+
+/// A backup whose database holds a hand-made attachment record.
+fn backup_with_record(
+    dir: &std::path::Path,
+    n: usize,
+    id: &str,
+    filename: &str,
+) -> std::path::PathBuf {
+    let s = Store::open(dir.join(format!("source-{n}.db"))).unwrap();
+    s.conn_for_tests()
+        .execute(
+            "INSERT INTO attachments (id, note_id, filename, mime, size, sha256, created_at)
+             VALUES (?1, NULL, ?2, 'text/plain', 1, '', 0)",
+            [id, filename],
+        )
+        .unwrap();
+    let zip = dir.join(format!("backup-{n}.zip"));
+    create_backup(&s, Some(&dir.join("att")), &zip, "test").unwrap();
+    zip
+}
+
+#[test]
+fn restoring_refuses_backups_with_unsafe_attachment_records() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("att")).unwrap();
+    let victim = dir.path().join("victim");
+    for (n, (id, filename)) in [
+        (victim.to_str().unwrap(), "x"), // absolute "id"
+        ("../../somewhere", "x"),        // relative escape
+        ("01a1f944-5235-7733-80ed-adbe2c772640", "../../.ssh/id_rsa"), // unsafe name
+        ("01a1f944-5235-7733-80ed-adbe2c772640", "/etc/passwd"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let zip = backup_with_record(dir.path(), n, id, filename);
+        let (db, att) = (
+            dir.path().join("restored.db"),
+            dir.path().join("restored-att"),
+        );
+        let result = extract_backup(&zip, &db, Some(&att));
+        assert!(
+            matches!(result, Err(Error::InvalidBackup(_))),
+            "{id} / {filename}: {result:?}"
+        );
+        assert!(!db.exists() && !att.exists(), "nothing left behind");
+    }
+}
+
+#[test]
+fn cleanup_never_touches_folders_outside_the_attachments_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let att = dir.path().join("att");
+    fs::create_dir_all(&att).unwrap();
+    let victim = dir.path().join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    fs::write(victim.join("precious.txt"), b"keep me").unwrap();
+    let s = Store::open_in_memory().unwrap();
+    for id in [victim.to_str().unwrap(), "../victim"] {
+        s.conn_for_tests()
+            .execute(
+                "INSERT INTO attachments (id, note_id, filename, mime, size, sha256, created_at)
+                 VALUES (?1, NULL, 'x', 'text/plain', 1, '', 0)",
+                [id],
+            )
+            .unwrap();
+    }
+    s.collect_unused_attachments(&att, i64::MAX / 2, 0).unwrap();
+    assert!(
+        victim.join("precious.txt").exists(),
+        "folder outside was left alone"
+    );
+}
+
+#[test]
+fn unsafe_file_names_are_never_turned_into_paths() {
+    let s = Store::open_in_memory().unwrap();
+    let id = "01a1f944-5235-7733-80ed-adbe2c772640";
+    s.conn_for_tests()
+        .execute(
+            "INSERT INTO attachments (id, note_id, filename, mime, size, sha256, created_at)
+             VALUES (?1, NULL, '../../secret', 'text/plain', 1, '', 0)",
+            [id],
+        )
+        .unwrap();
+    assert!(
+        s.attachment_path(std::path::Path::new("/tmp/att"), id)
+            .is_err()
+    );
+
+    use tuxnotes_core::attachments::is_safe_filename;
+    for ok in [
+        "photo.png",
+        "Pasted image.png",
+        "a b c ",
+        "résumé.pdf",
+        "x:y.txt",
+    ] {
+        assert!(is_safe_filename(ok), "{ok}");
+    }
+    for bad in [
+        "",
+        ".",
+        "..",
+        "a/b",
+        "a\\b",
+        "/etc/passwd",
+        "new\nline",
+        &"x".repeat(256),
+    ] {
+        assert!(!is_safe_filename(bad), "{bad:?}");
+    }
+}
