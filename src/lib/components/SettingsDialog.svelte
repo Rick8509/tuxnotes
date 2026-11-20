@@ -41,7 +41,9 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key !== "Escape" || app.confirmRequest || app.lockPrompt) return;
+    // A question or password window on top handles its own Escape (and marks it handled;
+    // it's already closed by the time this runs, so check the event too).
+    if (e.key !== "Escape" || e.defaultPrevented || app.confirmRequest || app.lockPrompt) return;
     e.preventDefault();
     if (section === "backup" && (backupView === "restore" || backupView === "password")) backupView = "home";
     else if (section === "backup" && backupView === "restorePassword") backupView = "restore";

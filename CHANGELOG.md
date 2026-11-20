@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- Pressing Escape on a question inside Settings (for example "Disconnect?") **closed all of Settings** instead of just the question.
 - The app **froze while a backup was being made** (seconds to minutes with many pictures), because notes couldn't be saved until the archive was finished. The notes are now only held for the quick database copy. Pictures and other already-compressed files are stored as they are, which makes backups faster.
 - While a search was active, typing in a note made it **jump back to the first match** every time it saved. It now only scrolls when the search words change.
 - **Backups larger than 1 GB** uploaded fine but could never be restored. Backups now upload from disk in 8 MB pieces and continue where they stopped after a dropped connection (instead of starting over), restores download straight to disk, and the restore limit is 64 GB. Transfers only time out when they stall, not after 10 minutes.
