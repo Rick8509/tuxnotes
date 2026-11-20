@@ -26,6 +26,7 @@ All notable changes to TuxNotes are listed here.
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed
+- A **collapsed folder's count** now includes the notes in its subfolders (open folders still show their own notes, with the subfolders listed below).
 - The message after locking a note now mentions the **automatic lock after idle time** (Settings → General) instead of only "Lock Now or close".
 - Recently Deleted said "28 days"; it now says **"28 days left"** (and "Removed soon" on the last day).
 - When another program changed your notes while TuxNotes was open, **the open note kept showing the old text** (and typing in it could save that old copy over the change). TuxNotes now notices such changes within a few seconds and shows them, keeping your place in the note.

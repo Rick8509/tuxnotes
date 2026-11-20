@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { descendantIds, dropPlacement, folderPath, visibleRows } from "./folders";
+import { descendantIds, dropPlacement, folderPath, totalNoteCount, visibleRows } from "./folders";
 import type { Folder } from "./types";
 
 const f = (id: string, parentId: string | null = null, isDefault = false): Folder => ({
@@ -18,6 +18,13 @@ describe("folder tree", () => {
   it("hides the children of collapsed folders", () => {
     expect(visibleRows(folders, new Set(["Work"])).map((r) => r.folder.id)).toEqual(["Notes", "Work", "Home"]);
   });
+  it("counts the notes in a folder and all its subfolders", () => {
+    const counted = folders.map((x, i) => ({ ...x, noteCount: i + 1 })); // Notes 1, Work 2, Projects 3, Old 4, Admin 5, Home 6
+    expect(totalNoteCount(counted, "Work")).toBe(2 + 3 + 4 + 5);
+    expect(totalNoteCount(counted, "Projects")).toBe(3 + 4);
+    expect(totalNoteCount(counted, "Home")).toBe(6);
+  });
+
   it("finds descendants and paths", () => {
     expect(descendantIds(folders, "Work")).toEqual(["Projects", "Admin", "Old"]);
     expect(folderPath(folders, "Old")).toBe("Work › Projects › Old");

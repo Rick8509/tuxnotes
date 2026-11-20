@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronRight, Folder as FolderIcon, FolderPlus, NotebookText, PanelLeftClose, Settings, Trash2 } from "@lucide/svelte";
   import { FOLDER_DRAG_TYPE, NOTE_DRAG_TYPE } from "../dnd";
-  import { childrenOf, dropPlacement, visibleRows, type DropZone } from "../folders";
+  import { childrenOf, dropPlacement, totalNoteCount, visibleRows, type DropZone } from "../folders";
   import { app } from "../stores/app.svelte";
   import { ui } from "../stores/ui.svelte";
   import type { Folder, NoteFilter } from "../types";
@@ -284,7 +284,8 @@
           >
             <FolderIcon size={16} />
             <span class="name">{folder.name}</span>
-            <span class="count">{folder.noteCount}</span>
+            <!-- Collapsed: count the notes in its subfolders too, since they're hidden. -->
+            <span class="count">{collapsed && hasChildren ? totalNoteCount(app.folders, folder.id) : folder.noteCount}</span>
           </button>
         {/if}
       </div>

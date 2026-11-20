@@ -46,6 +46,12 @@ export function descendantIds(folders: Folder[], id: string): string[] {
   return out;
 }
 
+/** Notes in a folder and all its subfolders. */
+export function totalNoteCount(folders: Folder[], id: string): number {
+  const own = folders.find((f) => f.id === id)?.noteCount ?? 0;
+  return descendantIds(folders, id).reduce((sum, d) => sum + (folders.find((f) => f.id === d)?.noteCount ?? 0), own);
+}
+
 /** "Work › Projects" style path for a folder. */
 export function folderPath(folders: Folder[], id: string): string {
   const parts: string[] = [];
