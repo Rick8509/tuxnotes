@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { Editor, Extension, getMarkRange } from "@tiptap/core";
   import { Placeholder } from "@tiptap/extensions";
-  import { EditorState, NodeSelection } from "@tiptap/pm/state";
+  import { EditorState, NodeSelection, TextSelection } from "@tiptap/pm/state";
   import type { EditorView } from "@tiptap/pm/view";
   import { ChevronDown, ChevronUp, Ellipsis, LockOpen, Maximize2, Minimize2, Pin, PinOff, RotateCcw, Search, SquarePen, Trash2 } from "@lucide/svelte";
   import LockedNote from "./LockedNote.svelte";
@@ -527,8 +527,13 @@
 
   function loadNote(ed: Editor, note: typeof app.current) {
     const hiddenNow = !!note && note.content === null;
-    const key = note ? `${note.id}${hiddenNow ? ":hidden" : ""}` : null;
+    // The reload counter changes when the note was changed outside TuxNotes.
+    const key = note ? `${note.id}${hiddenNow ? ":hidden" : ""}:${app.outsideReload}` : null;
     if (key !== loadedKey) {
+      // Same note reloaded (changed outside): keep the place and the cursor.
+      const sameNote = !!note && !!loadedKey && loadedKey.split(":")[0] === note.id;
+      const keepScroll = scroller.scrollTop;
+      const keepCursor = ed.state.selection.head;
       loadedKey = key;
       loadedId = note && !hiddenNow ? note.id : null;
       const json = note?.content ? $state.snapshot(note.content) : { type: "doc", content: [{ type: "paragraph" }] };
@@ -549,8 +554,9 @@
           content: lines.map((l) => (l ? { type: "paragraph", content: [{ type: "text", text: l }] } : { type: "paragraph" })),
         });
       }
-      ed.view.updateState(EditorState.create({ doc, plugins: ed.state.plugins }));
-      scroller.scrollTop = 0;
+      const selection = sameNote ? TextSelection.near(doc.resolve(Math.min(keepCursor, doc.content.size))) : undefined;
+      ed.view.updateState(EditorState.create({ doc, plugins: ed.state.plugins, selection }));
+      scroller.scrollTop = sameNote ? keepScroll : 0;
       // A fresh state has no highlights: re-run the find bar or search-word highlights.
       if (findOpen && findQuery) runFind();
       else applySearchHighlight(ed, true);

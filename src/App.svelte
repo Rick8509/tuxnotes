@@ -53,6 +53,17 @@
       }).then((fn) => cleanups.push(fn));
     }
 
+    // Notes changed by another program while TuxNotes is open: show the new state.
+    const checkOutside = () => {
+      if (document.visibilityState === "visible") void app.checkOutsideChanges();
+    };
+    const outsideTimer = setInterval(checkOutside, 3_000);
+    window.addEventListener("focus", checkOutside);
+    cleanups.push(() => {
+      clearInterval(outsideTimer);
+      window.removeEventListener("focus", checkOutside);
+    });
+
     // Lock locked notes again after a while without using TuxNotes (Settings → General).
     let lastActivity = Date.now();
     const onActivity = () => (lastActivity = Date.now());

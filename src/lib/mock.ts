@@ -305,6 +305,7 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return before - db.notes.length;
   },
   trash_count: () => db.notes.filter((n) => n.deletedAt !== null).length,
+  data_version: () => 0, // nothing else writes to the browser preview's notes
   discard_note_if_blank: ({ id }) => {
     const n = db.notes.find((x) => x.id === id);
     if (!n || n.deletedAt !== null || n.isLocked || !isBlank(n.content!)) return false;

@@ -126,6 +126,12 @@ pub fn trash_count(state: State<'_, AppState>) -> Result<i64> {
     store(&state)?.trash_count()
 }
 
+/// Changes when another program wrote to the notes (the window then reloads them).
+#[tauri::command]
+pub fn data_version(state: State<'_, AppState>) -> Result<i64> {
+    store(&state)?.data_version()
+}
+
 #[tauri::command]
 pub fn discard_note_if_blank(state: State<'_, AppState>, id: String) -> Result<bool> {
     store(&state)?.discard_note_if_blank(&id)

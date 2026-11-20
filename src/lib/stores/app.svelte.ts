@@ -88,6 +88,10 @@ class AppState {
 
   private pending: { id: string; getContent: () => DocJSON } | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The database's data_version when last checked (see checkOutsideChanges). */
+  private dataVersion: number | null = null;
+  /** Bumped when the open note is reloaded because it changed outside TuxNotes. */
+  outsideReload = $state(0);
   /** Saves that failed, by note: kept and retried so the changes aren't lost. */
   private unsaved = new Map<string, { content: DocJSON; tries: number }>();
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +218,7 @@ class AppState {
   // ------------------------------------------------------------ lifecycle
 
   async init() {
+    this.dataVersion = await api.dataVersion().catch(() => null);
     await this.refreshLock();
     await this.refreshCounts();
     await this.loadNotes();
@@ -227,6 +232,37 @@ class AppState {
     await this.loadNotes();
     await this.refreshCounts();
     await this.selectNote(selectId ?? this.notes[0]?.id ?? null);
+  }
+
+  /**
+   * Notice notes changed by another program while TuxNotes is open (normally nothing
+   * else writes to them) and show the new state: list, counts, and the open note, unless
+   * it has unsaved typing (which is then saved on top).
+   */
+  async checkOutsideChanges() {
+    const version = await api.dataVersion().catch(() => null);
+    if (version === null || version === this.dataVersion) return;
+    const first = this.dataVersion === null;
+    this.dataVersion = version;
+    if (first) return;
+    await this.refreshCounts();
+    await this.loadNotes();
+    if (this.searchResults) this.setQuery(this.query);
+    const id = this.current?.id;
+    if (!id || this.pending?.id === id || this.unsaved.has(id)) return;
+    let note: Note;
+    try {
+      note = await api.getNote(id);
+    } catch {
+      // Deleted outside TuxNotes: open another note.
+      await this.selectNote(this.notes[0]?.id ?? null);
+      return;
+    }
+    const cur = this.current;
+    if (cur?.id !== id || this.pending?.id === id) return; // switched or typed meanwhile
+    if (note.updatedAt === cur.updatedAt && note.isLocked === cur.isLocked && note.deletedAt === cur.deletedAt) return;
+    this.outsideReload++;
+    this.current = note;
   }
 
   /** Reload everything from the backend, e.g. after restoring a backup. */

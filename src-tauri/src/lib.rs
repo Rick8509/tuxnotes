@@ -117,6 +117,7 @@ pub fn run() {
             commands::delete_note_permanently,
             commands::empty_trash,
             commands::trash_count,
+            commands::data_version,
             commands::search_notes,
             commands::discard_note_if_blank,
             commands::backup_status,

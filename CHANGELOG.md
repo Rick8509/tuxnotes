@@ -26,6 +26,7 @@ All notable changes to TuxNotes are listed here.
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed
+- When another program changed your notes while TuxNotes was open, **the open note kept showing the old text** (and typing in it could save that old copy over the change). TuxNotes now notices such changes within a few seconds and shows them, keeping your place in the note.
 - After the computer's clock went backwards (or after restoring notes from a computer whose clock was ahead), **edited notes didn't move to the top** of the list. Edits now always count as newest.
 - **PDF export on computers set to another language** could fail with "printer not found": the built-in PDF printer has a translated name. TuxNotes now asks GTK for that translated name.
 - **A save that failed** (for example on a full disk) was thrown away when you switched notes. Failed saves are now kept, retried by themselves, and retried again with every later save until they succeed.

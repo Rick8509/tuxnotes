@@ -673,6 +673,15 @@ impl Store {
         self.conn.total_changes()
     }
 
+    /// A number that changes when another connection (another program) commits to the
+    /// database, and stays the same for this store's own changes. Lets the app notice
+    /// notes changed from outside while it's open.
+    pub fn data_version(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?)
+    }
+
     /// The newest time anything was edited, created, deleted or renamed (Unix ms).
     /// Doesn't see every change (moving a note between folders keeps its time); use
     /// together with [`Store::change_count`].

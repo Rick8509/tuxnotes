@@ -737,3 +737,25 @@ fn a_badly_wrong_clock_doesnt_push_all_dates_into_the_future() {
         "new notes get today's date, not 2100"
     );
 }
+
+#[test]
+fn changes_from_another_program_are_noticed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.db");
+    let app = Store::open(&path).unwrap();
+    let before = app.data_version().unwrap();
+    let n = app.create_note(None).unwrap();
+    app.update_note_content(&n.id, &doc(&["Own edit"])).unwrap();
+    assert_eq!(
+        app.data_version().unwrap(),
+        before,
+        "own changes don't count"
+    );
+
+    let other = Store::open(&path).unwrap(); // e.g. a tool writing to the same file
+    other
+        .update_note_content(&n.id, &doc(&["Changed outside"]))
+        .unwrap();
+    assert_ne!(app.data_version().unwrap(), before, "outside changes do");
+    assert_eq!(app.get_note(&n.id).unwrap().title, "Changed outside");
+}

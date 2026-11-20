@@ -74,6 +74,8 @@ export const api = {
   deleteNotePermanently: (id: string) => call<void>("delete_note_permanently", { id }),
   emptyTrash: () => call<number>("empty_trash"),
   trashCount: () => call<number>("trash_count"),
+  /** Changes when another program wrote to the notes database. */
+  dataVersion: () => call<number>("data_version"),
   searchNotes: (query: string) => call<NoteSummary[]>("search_notes", { query }),
   discardNoteIfBlank: (id: string) => call<boolean>("discard_note_if_blank", { id }),
 
