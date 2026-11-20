@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- After the computer's clock went backwards (or after restoring notes from a computer whose clock was ahead), **edited notes didn't move to the top** of the list. Edits now always count as newest.
 - **PDF export on computers set to another language** could fail with "printer not found": the built-in PDF printer has a translated name. TuxNotes now asks GTK for that translated name.
 - **A save that failed** (for example on a full disk) was thrown away when you switched notes. Failed saves are now kept, retried by themselves, and retried again with every later save until they succeed.
 - **Search results**: pressing Delete on a result while in Recently Deleted asked to delete it permanently (and then failed); moving a result to another folder made the selection jump. Both now act on the note itself and keep it selected.

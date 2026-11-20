@@ -681,3 +681,59 @@ fn duplicating_copies_content_into_the_same_folder() {
         "notes in the trash can't be duplicated"
     );
 }
+
+// ---------------------------------------------------------------- timestamps
+
+#[test]
+fn edits_stay_newest_after_the_clock_went_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.db");
+    let (old, edited) = {
+        let s = Store::open(&path).unwrap();
+        let a = s.create_note(None).unwrap();
+        s.update_note_content(&a.id, &doc(&["Older note"])).unwrap();
+        let b = s.create_note(None).unwrap();
+        s.update_note_content(&b.id, &doc(&["Edited later"]))
+            .unwrap();
+        // Pretend the first note was saved an hour "in the future" (the clock was ahead
+        // then, or it came from a computer whose clock was ahead).
+        let ahead = s.get_note_summary(&a.id).unwrap().updated_at + 3_600_000;
+        s.conn_for_tests()
+            .execute(
+                "UPDATE notes SET updated_at = ?2 WHERE id = ?1",
+                rusqlite::params![a.id, ahead],
+            )
+            .unwrap();
+        (a.id, b.id)
+    };
+    let s = Store::open(&path).unwrap();
+    s.update_note_content(&edited, &doc(&["Edited later", "again"]))
+        .unwrap();
+    let list = s.list_notes(&NoteFilter::All).unwrap();
+    assert_eq!(list[0].id, edited, "the note just edited is on top");
+    assert_ne!(list[0].id, old);
+}
+
+#[test]
+fn a_badly_wrong_clock_doesnt_push_all_dates_into_the_future() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.db");
+    {
+        let s = Store::open(&path).unwrap();
+        let a = s.create_note(None).unwrap();
+        s.update_note_content(&a.id, &doc(&["From the year 2100"]))
+            .unwrap();
+        s.conn_for_tests()
+            .execute(
+                "UPDATE notes SET updated_at = 4102444800000 WHERE id = ?1",
+                [&a.id],
+            )
+            .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let b = s.create_note(None).unwrap();
+    assert!(
+        b.created_at < 4_000_000_000_000,
+        "new notes get today's date, not 2100"
+    );
+}

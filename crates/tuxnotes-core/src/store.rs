@@ -69,17 +69,21 @@ impl Store {
             last_ts: Cell::new(0),
             notes_key: None,
         };
+        // Continue after the newest time already stored, so edits still sort as newest
+        // after the clock went back (or after restoring notes from a computer whose clock
+        // was ahead). A time more than a day ahead is ignored as a broken clock.
+        let newest = store.last_change_at()?.unwrap_or(0);
+        if newest <= wall_clock_ms() + DAY_MS {
+            store.last_ts.set(newest);
+        }
         store.ensure_default_folder()?;
         Ok(store)
     }
 
-    /// Current time in Unix milliseconds, strictly increasing per store.
+    /// Current time in Unix milliseconds, strictly increasing per store (and never
+    /// earlier than what's already stored, within reason).
     pub(crate) fn now(&self) -> i64 {
-        let wall = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let ts = wall.max(self.last_ts.get() + 1);
+        let ts = wall_clock_ms().max(self.last_ts.get() + 1);
         self.last_ts.set(ts);
         ts
     }
@@ -720,6 +724,13 @@ impl Store {
         self.conn.execute("VACUUM INTO ?1", [dest])?;
         Ok(())
     }
+}
+
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Turn user input into a safe FTS5 query: each word becomes a quoted prefix term.
