@@ -31,8 +31,8 @@ const APP_TAG_VALUE: &str = "backup";
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const SAFETY_PREFIX: &str = "tuxnotes-before-restore-";
 const SAFETY_KEEP: usize = 5;
-/// Largest backup we're willing to download into memory.
-const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+/// Largest backup we're willing to download (it streams to disk, not into memory).
+const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// Returned by `restore` when an encrypted backup needs its password; the UI asks for it.
 pub const PASSWORD_NEEDED: &str = "BACKUP_PASSWORD_NEEDED";
 
@@ -133,7 +133,9 @@ impl BackupService {
     ) -> Self {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(10 * 60))
+            // Fail when a transfer stalls, not after a fixed time: big backups on slow
+            // connections take as long as they take.
+            .read_timeout(Duration::from_secs(120))
             .user_agent(concat!("TuxNotes/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("HTTP client");
@@ -529,7 +531,7 @@ impl BackupService {
                 sealed.clone()
             }
         };
-        let bytes = fs::read(&upload).map_err(err)?;
+        let size = fs::metadata(&upload).map_err(err)?.len();
         let name = upload.file_name().unwrap().to_string_lossy().into_owned();
 
         let mut props = BTreeMap::from([
@@ -557,17 +559,21 @@ impl BackupService {
         let drive = self.drive();
         let file = self
             .with_token(|t| {
-                let (drive, folder, name, bytes, props) = (
+                let (drive, folder, name, path, props) = (
                     drive.clone(),
                     folder.clone(),
                     name.clone(),
-                    bytes.clone(),
+                    upload.clone(),
                     props.clone(),
                 );
-                async move { drive.upload(&t, &folder, &name, mime, bytes, &props).await }
+                async move {
+                    drive
+                        .upload_file(&t, &folder, &name, mime, &path, &props)
+                        .await
+                }
             })
             .await?;
-        log::info!("uploaded backup {} ({} bytes)", file.name, bytes.len());
+        log::info!("uploaded backup {} ({size} bytes)", file.name);
         self.set_change_baseline(changes);
 
         if let Err(e) = self.prune_remote(&folder).await {
@@ -577,7 +583,7 @@ impl BackupService {
             id: file.id,
             name: file.name,
             created_at: Some(manifest.created_at),
-            size: file.size.or(Some(bytes.len() as u64)),
+            size: file.size.or(Some(size)),
             note_count: Some(manifest.note_count),
             app_version: Some(manifest.app_version),
             encrypted: encryption.is_some(),
@@ -666,14 +672,6 @@ impl BackupService {
             .find(|b| b.id == file_id)
             .ok_or("This backup wasn't found in the TuxNotes Backups folder.")?
             .encrypted;
-        let drive = self.drive();
-        let bytes = self
-            .with_token(|t| {
-                let (drive, id) = (drive.clone(), file_id.to_string());
-                async move { drive.download(&t, &id, MAX_DOWNLOAD_BYTES).await }
-            })
-            .await?;
-
         let tmp = self.tmp_dir()?;
         let stamp = now_ms();
         let download = tmp.join(format!("restore-{stamp}.download"));
@@ -687,7 +685,16 @@ impl BackupService {
         ];
         cleanup.extend(backup::db_with_sidecars(&staged_db));
         let _cleanup = RemoveOnDrop(cleanup);
-        fs::write(&download, &bytes).map_err(err)?;
+        let drive = self.drive();
+        self.with_token(|t| {
+            let (drive, id, dest) = (drive.clone(), file_id.to_string(), download.clone());
+            async move {
+                drive
+                    .download_to_file(&t, &id, &dest, MAX_DOWNLOAD_BYTES)
+                    .await
+            }
+        })
+        .await?;
 
         // Decrypt first (if needed), before touching anything.
         let encryption = self.settings.get().backup_encryption;

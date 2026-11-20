@@ -1,6 +1,9 @@
 //! The small subset of the Google Drive v3 API that backups need.
 
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::time::Duration;
 
 use reqwest::{RequestBuilder, Response, StatusCode};
@@ -14,6 +17,10 @@ pub const DRIVE_UPLOAD_API: &str = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 const FILE_FIELDS: &str = "id,name,size,createdTime,appProperties";
 const MAX_ATTEMPTS: u32 = 3;
+/// Size of each piece of a resumable upload (Drive needs a multiple of 256 KiB).
+const UPLOAD_CHUNK: u64 = 8 * 1024 * 1024;
+/// How many times in a row one piece may fail before the upload gives up.
+const MAX_CHUNK_FAILURES: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +51,7 @@ pub struct DriveClient {
     api: String,
     upload_api: String,
     retry_delay: Duration,
+    chunk_size: u64,
 }
 
 impl DriveClient {
@@ -58,7 +66,14 @@ impl DriveClient {
             api: api.trim_end_matches('/').to_string(),
             upload_api: upload_api.trim_end_matches('/').to_string(),
             retry_delay: Duration::from_secs(1),
+            chunk_size: UPLOAD_CHUNK,
         }
+    }
+
+    /// Piece size for resumable uploads (tests use tiny pieces).
+    pub fn with_chunk_size(mut self, bytes: u64) -> Self {
+        self.chunk_size = bytes.max(1);
+        self
     }
 
     /// Base delay for exponential backoff between retries (tests use zero).
@@ -154,54 +169,90 @@ impl DriveClient {
         }
     }
 
-    /// Upload a file with a resumable session. Transient failures restart the upload.
-    pub async fn upload(
+    /// Upload a file from disk with a resumable session, one piece at a time, so memory
+    /// use stays at one piece however big the file is. When a piece fails (network
+    /// trouble, a server error), the upload asks Drive how much arrived and goes on
+    /// from there instead of starting over.
+    pub async fn upload_file(
         &self,
         token: &str,
         folder_id: &str,
         name: &str,
         mime_type: &str,
-        bytes: Vec<u8>,
+        path: &Path,
         app_properties: &BTreeMap<String, String>,
     ) -> Result<DriveFile> {
-        let mut attempt = 1;
+        let total = std::fs::metadata(path)?.len();
+        let session = self
+            .start_upload(token, folder_id, name, mime_type, total, app_properties)
+            .await?;
+        let mut file = File::open(path)?;
+        let mut offset = 0u64;
+        let mut failures = 0u32;
         loop {
-            match self
-                .upload_once(token, folder_id, name, mime_type, &bytes, app_properties)
-                .await
-            {
-                Err(e) if e.is_transient() && attempt < MAX_ATTEMPTS => {
-                    tokio::time::sleep(self.backoff(attempt)).await;
-                    attempt += 1;
+            let end = (offset + self.chunk_size).min(total);
+            let mut piece = vec![0u8; (end - offset) as usize];
+            file.seek(SeekFrom::Start(offset))?;
+            file.read_exact(&mut piece)?;
+            let req = self.http.put(&session).bearer_auth(token);
+            let req = if total == 0 {
+                req.header(reqwest::header::CONTENT_LENGTH, 0)
+            } else {
+                req.header(
+                    reqwest::header::CONTENT_RANGE,
+                    format!("bytes {offset}-{}/{total}", end - 1),
+                )
+            };
+            let outcome = match req.body(piece).send().await {
+                Ok(resp) => upload_progress(resp).await,
+                Err(e) => Err(e.into()),
+            };
+            match outcome {
+                Ok(Progress::Done(f)) => return Ok(*f),
+                Ok(Progress::Received(next)) => {
+                    offset = next;
+                    failures = 0;
                 }
-                other => return other,
+                Err(e) if e.is_transient() && failures + 1 < MAX_CHUNK_FAILURES => {
+                    failures += 1;
+                    tokio::time::sleep(self.backoff(failures)).await;
+                    // Continue from what Drive has; if even asking fails, resend the piece.
+                    match self.upload_status(token, &session, total).await {
+                        Ok(Progress::Done(f)) => return Ok(*f),
+                        Ok(Progress::Received(next)) => offset = next,
+                        Err(e) if e.is_transient() => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
             }
         }
     }
 
-    async fn upload_once(
+    /// Start a resumable upload session; returns its URL.
+    async fn start_upload(
         &self,
         token: &str,
         folder_id: &str,
         name: &str,
         mime_type: &str,
-        bytes: &[u8],
+        total: u64,
         app_properties: &BTreeMap<String, String>,
-    ) -> Result<DriveFile> {
+    ) -> Result<String> {
         let init = self
             .http
             .post(format!("{}/files", self.upload_api))
             .bearer_auth(token)
             .query(&[("uploadType", "resumable"), ("fields", FILE_FIELDS)])
             .header("X-Upload-Content-Type", mime_type)
-            .header("X-Upload-Content-Length", bytes.len())
+            .header("X-Upload-Content-Length", total)
             .json(&json!({
                 "name": name,
                 "mimeType": mime_type,
                 "parents": [folder_id],
                 "appProperties": app_properties,
             }));
-        let resp = check(init.send().await?).await?;
+        let resp = self.send(init).await?;
         let session = resp
             .headers()
             .get(reqwest::header::LOCATION)
@@ -209,19 +260,32 @@ impl DriveClient {
             .ok_or_else(|| Error::Api {
                 status: resp.status().as_u16(),
                 message: "Google Drive didn't start the upload.".into(),
-            })?
-            .to_string();
-
-        let put = self
-            .http
-            .put(session)
-            .header(reqwest::header::CONTENT_TYPE, mime_type)
-            .body(bytes.to_vec());
-        Ok(check(put.send().await?).await?.json().await?)
+            })?;
+        Ok(session.to_string())
     }
 
-    /// Download a file's contents, refusing anything larger than `max_bytes`.
-    pub async fn download(&self, token: &str, file_id: &str, max_bytes: u64) -> Result<Vec<u8>> {
+    /// Ask Drive how much of an upload it has received.
+    async fn upload_status(&self, token: &str, session: &str, total: u64) -> Result<Progress> {
+        let resp = self
+            .http
+            .put(session)
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_RANGE, format!("bytes */{total}"))
+            .header(reqwest::header::CONTENT_LENGTH, 0)
+            .send()
+            .await?;
+        upload_progress(resp).await
+    }
+
+    /// Download a file's contents into `dest`, refusing anything larger than
+    /// `max_bytes`. Streams to disk, so memory use stays small. Returns the size.
+    pub async fn download_to_file(
+        &self,
+        token: &str,
+        file_id: &str,
+        dest: &Path,
+        max_bytes: u64,
+    ) -> Result<u64> {
         let req = self
             .http
             .get(format!("{}/files/{}", self.api, encode_path(file_id)))
@@ -231,14 +295,24 @@ impl DriveClient {
         if resp.content_length().is_some_and(|len| len > max_bytes) {
             return Err(Error::TooLarge);
         }
-        let mut out = Vec::new();
-        while let Some(chunk) = resp.chunk().await? {
-            if out.len() as u64 + chunk.len() as u64 > max_bytes {
-                return Err(Error::TooLarge);
+        let result = async {
+            let mut file = File::create(dest)?;
+            let mut written = 0u64;
+            while let Some(chunk) = resp.chunk().await? {
+                written += chunk.len() as u64;
+                if written > max_bytes {
+                    return Err(Error::TooLarge);
+                }
+                file.write_all(&chunk)?;
             }
-            out.extend_from_slice(&chunk);
+            file.sync_all()?;
+            Ok(written)
         }
-        Ok(out)
+        .await;
+        if result.is_err() {
+            let _ = std::fs::remove_file(dest);
+        }
+        result
     }
 
     /// Permanently delete a file (only works for files this app created).
@@ -277,6 +351,30 @@ impl DriveClient {
     fn backoff(&self, attempt: u32) -> Duration {
         self.retry_delay * 2u32.pow(attempt - 1)
     }
+}
+
+/// Where a resumable upload stands after a request.
+enum Progress {
+    /// Finished: the uploaded file.
+    Done(Box<DriveFile>),
+    /// Not finished: the next byte Drive expects.
+    Received(u64),
+}
+
+async fn upload_progress(resp: Response) -> Result<Progress> {
+    if resp.status().as_u16() == 308 {
+        // "Resume Incomplete": Range says what Drive has, e.g. "bytes=0-8388607";
+        // no Range means nothing arrived yet.
+        let next = resp
+            .headers()
+            .get(reqwest::header::RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|r| r.rsplit('-').next())
+            .and_then(|last| last.trim().parse::<u64>().ok())
+            .map_or(0, |last| last + 1);
+        return Ok(Progress::Received(next));
+    }
+    Ok(Progress::Done(Box::new(check(resp).await?.json().await?)))
 }
 
 /// Turn non-success responses into errors with Google's message.

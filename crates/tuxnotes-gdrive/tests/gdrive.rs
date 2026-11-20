@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::json;
 use tuxnotes_gdrive::{DriveClient, Error, LoopbackReceiver, OAuthClient, Pkce};
 use wiremock::matchers::{
-    body_partial_json, body_string_contains, header, method, path, query_param,
+    body_partial_json, body_string, body_string_contains, header, method, path, query_param,
 };
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -332,84 +332,147 @@ async fn list_follows_pages_and_parses_string_sizes() {
     assert_eq!(files[1].id, "b");
 }
 
-#[tokio::test]
-async fn upload_uses_a_resumable_session() {
-    let server = MockServer::start().await;
+/// A file with `bytes` in a temporary folder.
+fn temp_file(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("backup.zip");
+    std::fs::write(&path, bytes).unwrap();
+    (dir, path)
+}
+
+/// Mount the session start (expected exactly `times` times); returns the session path.
+async fn upload_session(server: &MockServer, times: u64) -> String {
     let session = format!("{}/upload-session/abc", server.uri());
     Mock::given(method("POST"))
         .and(path("/upload/drive/v3/files"))
         .and(query_param("uploadType", "resumable"))
-        .and(header("x-upload-content-length", "5"))
+        .and(header("x-upload-content-length", "10"))
         .and(body_partial_json(json!({
             "name": "b.zip", "parents": ["folder-1"], "appProperties": { "tuxnotes": "backup" }
         })))
         .respond_with(ResponseTemplate::new(200).insert_header("Location", session.as_str()))
-        .expect(1)
-        .mount(&server)
+        .expect(times)
+        .mount(server)
         .await;
+    "/upload-session/abc".into()
+}
+
+fn piece(range: &str, body: &str) -> wiremock::MockBuilder {
     Mock::given(method("PUT"))
         .and(path("/upload-session/abc"))
-        .and(body_string_contains("hello"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "id": "file-1", "name": "b.zip", "size": "5" })),
-        )
+        .and(header("content-range", range))
+        .and(body_string(body))
+}
+
+fn received(last: u64) -> ResponseTemplate {
+    ResponseTemplate::new(308).insert_header("Range", format!("bytes=0-{last}").as_str())
+}
+
+fn done() -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .set_body_json(json!({ "id": "file-1", "name": "b.zip", "size": "10" }))
+}
+
+async fn upload(
+    server: &MockServer,
+    path: &std::path::Path,
+) -> tuxnotes_gdrive::Result<tuxnotes_gdrive::DriveFile> {
+    let props = BTreeMap::from([("tuxnotes".to_string(), "backup".to_string())]);
+    drive(server)
+        .await
+        .with_chunk_size(4)
+        .upload_file("tok", "folder-1", "b.zip", "application/zip", path, &props)
+        .await
+}
+
+#[tokio::test]
+async fn upload_sends_the_file_in_pieces() {
+    let server = MockServer::start().await;
+    upload_session(&server, 1).await;
+    piece("bytes 0-3/10", "0123")
+        .respond_with(received(3))
         .expect(1)
         .mount(&server)
         .await;
-    let props = BTreeMap::from([("tuxnotes".to_string(), "backup".to_string())]);
-    let file = drive(&server)
-        .await
-        .upload(
-            "tok",
-            "folder-1",
-            "b.zip",
-            "application/zip",
-            b"hello".to_vec(),
-            &props,
-        )
-        .await
-        .unwrap();
-    assert_eq!(file.id, "file-1");
-    assert_eq!(file.size, Some(5));
+    piece("bytes 4-7/10", "4567")
+        .respond_with(received(7))
+        .expect(1)
+        .mount(&server)
+        .await;
+    piece("bytes 8-9/10", "89")
+        .respond_with(done())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (_dir, file) = temp_file(b"0123456789");
+    let uploaded = upload(&server, &file).await.unwrap();
+    assert_eq!((uploaded.id.as_str(), uploaded.size), ("file-1", Some(10)));
 }
 
 #[tokio::test]
-async fn upload_restarts_after_a_server_error() {
+async fn upload_continues_where_it_stopped_after_a_failure() {
     let server = MockServer::start().await;
-    let session = format!("{}/s", server.uri());
-    Mock::given(method("POST"))
-        .and(path("/upload/drive/v3/files"))
-        .respond_with(ResponseTemplate::new(200).insert_header("Location", session.as_str()))
-        .expect(2)
+    upload_session(&server, 1).await; // never starts over
+    piece("bytes 0-3/10", "0123")
+        .respond_with(received(3))
+        .expect(1)
         .mount(&server)
         .await;
+    piece("bytes 4-7/10", "4567")
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Asked how much arrived, Drive says it has bytes 0-5: go on from byte 6.
+    Mock::given(method("PUT"))
+        .and(header("content-range", "bytes */10"))
+        .respond_with(received(5))
+        .expect(1)
+        .mount(&server)
+        .await;
+    piece("bytes 6-9/10", "6789")
+        .respond_with(done())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (_dir, file) = temp_file(b"0123456789");
+    assert_eq!(upload(&server, &file).await.unwrap().id, "file-1");
+}
+
+#[tokio::test]
+async fn upload_gives_up_after_repeated_failures() {
+    let server = MockServer::start().await;
+    upload_session(&server, 1).await;
     Mock::given(method("PUT"))
         .respond_with(ResponseTemplate::new(503))
-        .up_to_n_times(1)
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "ok", "name": "b" })))
-        .mount(&server)
-        .await;
-    let file = drive(&server)
-        .await
-        .upload(
-            "tok",
-            "f",
-            "b",
-            "application/zip",
-            vec![1, 2, 3],
-            &BTreeMap::new(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(file.id, "ok");
+    let (_dir, file) = temp_file(b"0123456789");
+    let result = upload(&server, &file).await;
+    assert!(
+        matches!(result, Err(Error::Api { status: 503, .. })),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]
-async fn download_returns_bytes_and_enforces_limit() {
+async fn upload_reports_a_rejected_token_so_it_can_be_refreshed() {
+    let server = MockServer::start().await;
+    upload_session(&server, 1).await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (_dir, file) = temp_file(b"0123456789");
+    assert!(matches!(
+        upload(&server, &file).await,
+        Err(Error::Unauthorized)
+    ));
+}
+
+#[tokio::test]
+async fn download_streams_to_a_file_and_enforces_the_limit() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/drive/v3/files/file-1"))
@@ -418,14 +481,21 @@ async fn download_returns_bytes_and_enforces_limit() {
         .mount(&server)
         .await;
     let d = drive(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("download");
     assert_eq!(
-        d.download("tok", "file-1", 100).await.unwrap(),
-        b"zip-bytes"
+        d.download_to_file("tok", "file-1", &dest, 100)
+            .await
+            .unwrap(),
+        9
     );
+    assert_eq!(std::fs::read(&dest).unwrap(), b"zip-bytes");
+    let small = dir.path().join("too-small");
     assert!(matches!(
-        d.download("tok", "file-1", 3).await,
+        d.download_to_file("tok", "file-1", &small, 3).await,
         Err(Error::TooLarge)
     ));
+    assert!(!small.exists(), "nothing left behind");
 }
 
 #[tokio::test]
