@@ -152,18 +152,23 @@ fn spawn_auto_backup(app: AppHandle) {
         tokio::time::sleep(AUTO_BACKUP_INITIAL_DELAY).await;
         loop {
             let state = app.state::<AppState>();
-            if state.backup.auto_backup_due(backup_service::now_ms()) {
+            let due = match state.store.lock() {
+                Ok(store) => state
+                    .backup
+                    .auto_backup_due(&store, backup_service::now_ms()),
+                Err(_) => false,
+            };
+            if due {
                 log::info!("starting automatic backup");
-                match state.backup.backup_now(&app).await {
-                    Ok(info) => {
-                        log::info!("automatic backup finished: {}", info.name);
-                        let _ = app.emit("backup-status-changed", ());
-                    }
-                    Err(e) => {
-                        log::warn!("automatic backup failed: {e}");
-                        let _ = app.emit("backup-status-changed", ());
-                    }
+                let result = state.backup.backup_now(&app).await;
+                state
+                    .backup
+                    .auto_backup_finished(result.is_ok(), backup_service::now_ms());
+                match result {
+                    Ok(info) => log::info!("automatic backup finished: {}", info.name),
+                    Err(e) => log::warn!("automatic backup failed: {e}"),
                 }
+                let _ = app.emit("backup-status-changed", ());
             }
             tokio::time::sleep(AUTO_BACKUP_CHECK).await;
         }

@@ -22,6 +22,7 @@ All notable changes to TuxNotes are listed here.
 - Notes, folders, rich text, checklists, pinning, Recently Deleted (30 days) and accent-insensitive search.
 
 ### Fixed
+- **Automatic backups ran even when nothing had changed**, pushing older, different backups out of the "keep the last N" list, and retried every 15 minutes while offline. They now only run when something changed, and wait longer after each failure (up to 6 hours).
 - Dropping or pasting a **too-large file together with others hid the "too large" message**. It now stays visible, and files over 50 MB are refused right away instead of being read first.
 - Files with **long Chinese, Japanese and other non-Latin names** couldn't be attached ("file name too long"). Long names are now shortened to fit the file system, keeping the extension.
 - Attachments with very long names could be **left out of backups without a warning**. They're included again, and new long names are shortened cleanly.

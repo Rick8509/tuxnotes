@@ -19,7 +19,7 @@ use tuxnotes_gdrive::{DriveClient, LoopbackReceiver, OAuthClient, Pkce, Tokens, 
 use crate::AppState;
 use crate::credentials::{BACKUP_KEY_ACCOUNT, TokenVault};
 use crate::google_client::{self, ClientSource};
-use crate::settings::{AutoBackup, BackupEncryption, SettingsStore};
+use crate::settings::{AutoBackup, BackupEncryption, Settings, SettingsStore};
 
 /// Event carrying the Google sign-in URL, so the UI can offer "Copy link"
 /// if the browser didn't open.
@@ -99,6 +99,9 @@ pub struct BackupService {
     /// `Store::change_count` when the last backup was made (or TuxNotes started), to
     /// tell whether there's anything new to back up when closing.
     change_baseline: Mutex<u64>,
+    /// Automatic backups that failed in a row, and when the next one may try again.
+    auto_failures: Mutex<u32>,
+    auto_retry_at: Mutex<i64>,
     data_dir: PathBuf,
     config_dir: PathBuf,
     db_path: PathBuf,
@@ -147,6 +150,8 @@ impl BackupService {
             vault,
             key_vault: TokenVault::with_account(BACKUP_KEY_ACCOUNT, data_dir.join("backup-key")),
             change_baseline: Mutex::new(0),
+            auto_failures: Mutex::new(0),
+            auto_retry_at: Mutex::new(0),
             attachments_dir: data_dir.join("attachments"),
             data_dir,
             config_dir,
@@ -254,14 +259,17 @@ impl BackupService {
         if !s.backup_on_close || !*self.signed_in.lock().unwrap() {
             return false;
         }
-        let edited_since = match (store.last_change_at().ok().flatten(), s.last_backup_at) {
-            (Some(changed), Some(backed_up)) => changed > backed_up,
-            (Some(_), None) => true,
-            (None, _) => false,
-        };
-        store.change_count() > *self.change_baseline.lock().unwrap()
-            || edited_since
-            || s.last_backup_error.is_some()
+        self.has_new_changes(store, &s) || s.last_backup_error.is_some()
+    }
+
+    /// Whether anything changed since the last successful backup.
+    fn has_new_changes(&self, store: &Store, s: &Settings) -> bool {
+        new_changes(
+            store.change_count(),
+            *self.change_baseline.lock().unwrap(),
+            store.last_change_at().ok().flatten(),
+            s.last_backup_at,
+        )
     }
 
     /// The backup made while TuxNotes closes (its window is already hidden).
@@ -285,15 +293,33 @@ impl BackupService {
     }
 
     /// True when an automatic backup should run now.
-    pub fn auto_backup_due(&self, now_ms: i64) -> bool {
+    /// True when an automatic backup should run now: automatic backups are on, Google
+    /// Drive is connected and idle, the interval has passed, something changed since the
+    /// last backup (unchanged copies would push older, different ones out), and after a
+    /// failure the wait before trying again is over.
+    pub fn auto_backup_due(&self, store: &Store, now_ms: i64) -> bool {
         let s = self.settings.get();
         let Some(interval) = s.auto_backup.interval_ms() else {
             return false;
         };
         *self.signed_in.lock().unwrap()
             && self.busy.lock().unwrap().is_none()
+            && now_ms >= *self.auto_retry_at.lock().unwrap()
             && s.last_backup_at
                 .is_none_or(|last| now_ms - last >= interval)
+            && self.has_new_changes(store, &s)
+    }
+
+    /// After an automatic backup: on failure wait longer before each new try
+    /// (15 min, 30 min, 1 h … up to 6 h); on success go back to normal.
+    pub fn auto_backup_finished(&self, ok: bool, now_ms: i64) {
+        let mut failures = self.auto_failures.lock().unwrap();
+        *failures = if ok { 0 } else { *failures + 1 };
+        *self.auto_retry_at.lock().unwrap() = if ok {
+            0
+        } else {
+            now_ms + retry_wait_ms(*failures)
+        };
     }
 
     // ------------------------------------------------------------------ account
@@ -811,6 +837,30 @@ impl BackupService {
     }
 }
 
+/// Whether anything changed since the last successful backup: rows changed through the
+/// store since then (this session), or anything edited after it (also from earlier
+/// sessions that ended without a backup).
+fn new_changes(
+    change_count: u64,
+    baseline: u64,
+    last_change_at: Option<i64>,
+    last_backup_at: Option<i64>,
+) -> bool {
+    let edited_since = match (last_change_at, last_backup_at) {
+        (Some(changed), Some(backed_up)) => changed > backed_up,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    change_count > baseline || edited_since
+}
+
+/// How long to wait before retrying after `failures` automatic backups failed in a row.
+fn retry_wait_ms(failures: u32) -> i64 {
+    const FIRST: i64 = 15 * 60 * 1000;
+    const LONGEST: i64 = 6 * 60 * 60 * 1000;
+    (FIRST << failures.saturating_sub(1).min(16)).min(LONGEST)
+}
+
 /// Refuse to upload unencrypted while a backup key is saved: the encryption settings
 /// must have gone missing, and uploading would silently drop the protection.
 fn check_encryption_settings(
@@ -945,6 +995,32 @@ pub fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn backs_up_only_when_something_changed() {
+        let (t, later) = (Some(1_000), Some(2_000));
+        assert!(
+            !new_changes(5, 5, t, later),
+            "nothing since the last backup"
+        );
+        assert!(new_changes(6, 5, t, later), "changed this session");
+        assert!(
+            new_changes(5, 5, Some(3_000), later),
+            "edited after the last backup"
+        );
+        assert!(new_changes(5, 5, t, None), "never backed up");
+        assert!(!new_changes(0, 0, None, None), "no notes at all");
+    }
+
+    #[test]
+    fn retries_wait_longer_after_each_failure() {
+        let min = 60 * 1000;
+        assert_eq!(retry_wait_ms(1), 15 * min);
+        assert_eq!(retry_wait_ms(2), 30 * min);
+        assert_eq!(retry_wait_ms(3), 60 * min);
+        assert_eq!(retry_wait_ms(6), 6 * 60 * min, "capped at 6 hours");
+        assert_eq!(retry_wait_ms(40), 6 * 60 * min);
+    }
 
     #[test]
     fn never_uploads_unencrypted_while_a_backup_key_is_saved() {
