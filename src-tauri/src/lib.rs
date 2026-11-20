@@ -134,7 +134,7 @@ pub fn run() {
             commands::app_info,
             attachments::add_attachment,
             attachments::attach_files,
-            attachments::paste_clipboard_image,
+            attachments::paste_from_clipboard,
             attachments::open_attachment,
             attachments::save_attachment_as,
             export::export_markdown,

@@ -315,11 +315,11 @@
       void addFiles(files);
       return true;
     }
-    // WebKitGTK (the engine TuxNotes runs on) doesn't hand pasted images to the page, so a
-    // screenshot or copied picture arrives as an empty paste: read it from the system clipboard.
+    // WebKitGTK (the engine TuxNotes runs on) doesn't hand pasted images or copied files to
+    // the page, so they arrive as an empty paste: read them from the system clipboard.
     if (!isTauri) return false;
     event.preventDefault();
-    void pasteClipboardImage(html);
+    void pasteFromClipboard(html);
     return true;
   }
 
@@ -333,15 +333,16 @@
       .filter((file): file is File => !!file);
   }
 
-  async function pasteClipboardImage(html: string) {
+  async function pasteFromClipboard(html: string) {
     const ed = editor;
     const noteId = loadedId;
     if (!ed || !noteId || !ed.isEditable) return;
     try {
-      const attachment = await api.pasteClipboardImage(noteId);
+      const { attachments, errors } = await api.pasteFromClipboard(noteId);
       if (loadedId !== noteId) return;
-      if (attachment) insertAttachments(ed, [nodeForAttachment(attachment)]);
-      else if (html.trim()) ed.commands.insertContent(html); // no image: paste whatever there was
+      if (attachments.length) insertAttachments(ed, attachments.map(nodeForAttachment));
+      else if (html.trim()) ed.commands.insertContent(html); // nothing to attach: paste whatever there was
+      if (errors.length) app.showError(errors.join(" "));
     } catch (e) {
       app.showError(e);
     }

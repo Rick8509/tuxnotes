@@ -176,67 +176,121 @@ pub async fn attach_files(app: AppHandle, note_id: String) -> CmdResult<AttachRe
     .map_err(err)?
 }
 
-/// Paste an image from the system clipboard into a note.
+/// Paste from the system clipboard into a note: files copied in a file manager, or else
+/// an image (a screenshot, a copied picture).
 ///
-/// WebKitGTK doesn't hand pasted images to the page (the paste event has no files), so
-/// the editor calls this when a paste brings no text. Returns `None` when the clipboard
-/// holds no image.
+/// WebKitGTK doesn't hand these to the page (a pasted image arrives as an empty paste
+/// event, copied files as an empty URI list), so the editor calls this when a paste
+/// brings no text. Nothing attachable on the clipboard gives an empty result.
 #[tauri::command]
-pub async fn paste_clipboard_image(
-    app: AppHandle,
-    note_id: String,
-) -> CmdResult<Option<Attachment>> {
-    let Some(png) = clipboard_image(&app).await? else {
-        return Ok(None);
-    };
+pub async fn paste_from_clipboard(app: AppHandle, note_id: String) -> CmdResult<AttachResult> {
+    let clip = clipboard_attachable(&app).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let store = state.store.lock().map_err(|_| "note store unavailable")?;
-        store
-            .add_attachment(
-                &state.attachments_dir,
-                Some(&note_id),
-                "Pasted image.png",
-                "image/png",
-                &png,
-            )
-            .map(Some)
-            .map_err(err)
+        let mut result = AttachResult {
+            attachments: Vec::new(),
+            errors: Vec::new(),
+        };
+        let dir = &state.attachments_dir;
+        match clip {
+            Clip::Files(paths) => {
+                for path in paths {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if path.is_dir() {
+                        result
+                            .errors
+                            .push(format!("“{name}” is a folder; only files can be attached."));
+                        continue;
+                    }
+                    match store.add_attachment_from_file(dir, Some(&note_id), &path) {
+                        Ok(a) => result.attachments.push(a),
+                        Err(e) => result.errors.push(e.to_string()),
+                    }
+                }
+            }
+            Clip::Image(png) => {
+                let a = store
+                    .add_attachment(dir, Some(&note_id), "Pasted image.png", "image/png", &png)
+                    .map_err(err)?;
+                result.attachments.push(a);
+            }
+            Clip::Nothing => {}
+        }
+        Ok(result)
     })
     .await
     .map_err(err)?
 }
 
-/// The clipboard's image as PNG bytes. GTK's clipboard lives on the main thread.
+/// What the clipboard holds that can be attached.
+enum Clip {
+    /// Local files, e.g. copied in a file manager.
+    Files(Vec<PathBuf>),
+    /// An image, as PNG bytes.
+    Image(Vec<u8>),
+    Nothing,
+}
+
+/// Read the clipboard (GTK's clipboard lives on the main thread): copied files first,
+/// then an image.
 #[cfg(target_os = "linux")]
-async fn clipboard_image(app: &AppHandle) -> CmdResult<Option<Vec<u8>>> {
+async fn clipboard_attachable(app: &AppHandle) -> CmdResult<Clip> {
     use gtk::gdk;
     let (tx, rx) = oneshot::channel();
     app.run_on_main_thread(move || {
         let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
-        // Screenshots and browsers offer PNG: keep those bytes as they are.
-        clipboard.request_contents(&gdk::Atom::intern("image/png"), move |clipboard, data| {
-            let png = data.data();
-            if !png.is_empty() {
-                let _ = tx.send(Some(png));
-                return;
-            }
-            // Any other image GTK can read (JPEG, BMP, …): convert it to PNG.
-            clipboard.request_image(move |_, pixbuf| {
-                let _ = tx.send(pixbuf.and_then(|p| p.save_to_bufferv("png", &[]).ok()));
-            });
-        });
+        clipboard.request_contents(
+            &gdk::Atom::intern("text/uri-list"),
+            move |clipboard, data| {
+                let files = local_files(&String::from_utf8_lossy(&data.data()));
+                if !files.is_empty() {
+                    let _ = tx.send(Clip::Files(files));
+                    return;
+                }
+                // Screenshots and browsers offer PNG: keep those bytes as they are.
+                clipboard.request_contents(
+                    &gdk::Atom::intern("image/png"),
+                    move |clipboard, data| {
+                        let png = data.data();
+                        if !png.is_empty() {
+                            let _ = tx.send(Clip::Image(png));
+                            return;
+                        }
+                        // Any other image GTK can read (JPEG, BMP, …): convert it to PNG.
+                        clipboard.request_image(move |_, pixbuf| {
+                            let png = pixbuf.and_then(|p| p.save_to_bufferv("png", &[]).ok());
+                            let _ = tx.send(png.map_or(Clip::Nothing, Clip::Image));
+                        });
+                    },
+                );
+            },
+        );
     })
     .map_err(err)?;
     match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-        Ok(image) => Ok(image.unwrap_or(None)),
+        Ok(clip) => Ok(clip.unwrap_or(Clip::Nothing)),
         Err(_) => Err("Reading the clipboard took too long.".into()),
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn clipboard_image(_app: &AppHandle) -> CmdResult<Option<Vec<u8>>> {
-    Ok(None)
+async fn clipboard_attachable(_app: &AppHandle) -> CmdResult<Clip> {
+    Ok(Clip::Nothing)
+}
+
+/// Local file paths from a text/uri-list (one URI per line, "#" lines are comments).
+#[cfg(target_os = "linux")]
+fn local_files(uri_list: &str) -> Vec<PathBuf> {
+    uri_list
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|uri| gtk::glib::filename_from_uri(uri).ok().map(|(path, _)| path))
+        .collect()
 }
 
 /// Open an attachment with the default app for its type.
@@ -287,6 +341,22 @@ pub async fn save_attachment_as(app: AppHandle, id: String) -> CmdResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::percent_decode;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copied_files_are_read_from_a_uri_list() {
+        use super::local_files;
+        use std::path::PathBuf;
+        let list = "# copied in Files\r\nfile:///home/me/My%20Report.pdf\r\nfile:///tmp/a.png\r\nhttps://example.com/x.png\r\n";
+        assert_eq!(
+            local_files(list),
+            [
+                PathBuf::from("/home/me/My Report.pdf"),
+                PathBuf::from("/tmp/a.png")
+            ]
+        );
+        assert!(local_files("").is_empty());
+    }
 
     #[test]
     fn decodes_percent_encoded_file_names() {

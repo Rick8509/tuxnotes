@@ -112,7 +112,9 @@ export const api = {
     }
   },
   /** Attach the image on the system clipboard (null if there isn't one). */
-  pasteClipboardImage: (noteId: string) => (isTauri ? call<Attachment | null>("paste_clipboard_image", { noteId }) : Promise.resolve(null)),
+  /** Attach what the system clipboard holds: copied files, or else an image. */
+  pasteFromClipboard: (noteId: string): Promise<AttachResult> =>
+    isTauri ? call<AttachResult>("paste_from_clipboard", { noteId }) : Promise.resolve({ attachments: [], errors: [] }),
   /** Show the file picker and attach the chosen files. */
   attachFiles: (noteId: string) =>
     isTauri ? call<AttachResult>("attach_files", { noteId }) : import("./mock").then((m) => m.mockAttachFiles(noteId)),
