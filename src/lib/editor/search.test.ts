@@ -4,6 +4,12 @@ import { findInText, foldWithMap } from "./search";
 const slices = (text: string, query: string, wordStart = false) => findInText(text, query, wordStart).map(([s, e]) => text.slice(s, e));
 
 describe("findInText", () => {
+  it("finds Chinese, Japanese and Thai words inside sentences, even when matching word starts", () => {
+    expect(slices("今日は牛乳を買う", "牛乳", true)).toEqual(["牛乳"]);
+    expect(slices("ฉันชอบกินข้าว", "กิน", true)).toEqual(["กิน"]);
+    expect(slices("milk and 牛乳", "ilk", true)).toEqual([]); // Latin words still need a word start
+  });
+
   it("ignores case and accents", () => {
     expect(slices("Café, CAFE and cafe", "cafe")).toEqual(["Café", "CAFE", "cafe"]);
     expect(slices("naïve résumé", "RESUME")).toEqual(["résumé"]);

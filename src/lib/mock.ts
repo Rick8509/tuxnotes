@@ -319,8 +319,11 @@ const handlers: Record<string, (a: Args) => unknown> = {
     return db.notes
       .filter((n) => n.deletedAt === null)
       .filter((n) => {
-        const tokens = fold(`${n.title}\n${n.plain}`).split(/[^\p{L}\p{N}]+/u);
-        return words.every((w) => tokens.some((t) => t.startsWith(fold(w))));
+        const text = fold(`${n.title}\n${n.plain}`);
+        const tokens = text.split(/[^\p{L}\p{N}]+/u);
+        // Like the app: words in scripts written without spaces (CJK, Thai…) match anywhere.
+        const unspaced = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF]/u;
+        return words.every((w) => (unspaced.test(w) ? text.includes(fold(w)) : tokens.some((t) => t.startsWith(fold(w)))));
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map(summary);

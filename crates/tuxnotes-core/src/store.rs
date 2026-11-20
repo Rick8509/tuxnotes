@@ -629,20 +629,46 @@ impl Store {
     /// Full-text search over titles and bodies of notes not in the trash.
     /// Every word is matched as a prefix, so "gro mil" finds "Groceries: milk".
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<NoteSummary>> {
-        let Some(fts_query) = build_fts_query(query) else {
+        // Scripts written without spaces (Chinese, Japanese, Thai…) are one long "word"
+        // to the index, which only matches from its start: find such words anywhere.
+        let (unspaced, spaced): (Vec<&str>, Vec<&str>) = query
+            .split_whitespace()
+            .partition(|w| w.chars().any(is_unspaced_script));
+        let fts_query = build_fts_query(&spaced.join(" "));
+        if fts_query.is_none() && unspaced.is_empty() {
             return Ok(Vec::new());
-        };
-        let mut stmt = self.conn.prepare(
+        }
+        let mut sql = String::from(
             "SELECT n.id, n.folder_id, n.title, n.snippet, n.is_pinned,
                     n.created_at, n.updated_at, n.deleted_at, (n.locked_blob IS NOT NULL)
-             FROM notes_fts
-             JOIN notes n ON n.seq = notes_fts.rowid
-             WHERE notes_fts MATCH ?1 AND n.deleted_at IS NULL
-             ORDER BY bm25(notes_fts, 10.0, 1.0), n.updated_at DESC
-             LIMIT ?2",
-        )?;
+             FROM notes n",
+        );
+        let mut args: Vec<String> = Vec::new();
+        if fts_query.is_some() {
+            sql.push_str(" JOIN notes_fts ON notes_fts.rowid = n.seq");
+        }
+        sql.push_str(" WHERE n.deleted_at IS NULL");
+        if let Some(q) = &fts_query {
+            args.push(q.clone());
+            sql.push_str(&format!(" AND notes_fts MATCH ?{}", args.len()));
+        }
+        for word in &unspaced {
+            args.push(word.to_string());
+            let n = args.len();
+            sql.push_str(&format!(
+                " AND (instr(n.title, ?{n}) > 0 OR instr(n.content_text, ?{n}) > 0)"
+            ));
+        }
+        sql.push_str(if fts_query.is_some() {
+            " ORDER BY bm25(notes_fts, 10.0, 1.0), n.updated_at DESC"
+        } else {
+            " ORDER BY n.updated_at DESC, n.seq DESC"
+        });
+        args.push(limit.to_string());
+        sql.push_str(&format!(" LIMIT CAST(?{} AS INTEGER)", args.len()));
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![fts_query, limit as i64], summary_from_row)?
+            .query_map(rusqlite::params_from_iter(args.iter()), summary_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -740,6 +766,22 @@ fn wall_clock_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Letters of scripts usually written without spaces between words.
+fn is_unspaced_script(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF   // Hiragana, Katakana
+        | 0x31F0..=0x31FF // Katakana phonetic extensions
+        | 0x3400..=0x4DBF // CJK extension A
+        | 0x4E00..=0x9FFF // CJK unified ideographs
+        | 0xF900..=0xFAFF // CJK compatibility ideographs
+        | 0xFF66..=0xFF9F // half-width Katakana
+        | 0x20000..=0x2FFFF // CJK extensions B and later
+        | 0x0E00..=0x0EFF // Thai, Lao
+        | 0x1000..=0x109F // Myanmar
+        | 0x1780..=0x17FF // Khmer
+    )
 }
 
 /// Turn user input into a safe FTS5 query: each word becomes a quoted prefix term.

@@ -26,6 +26,7 @@ All notable changes to TuxNotes are listed here.
 - Encryption keys, Argon2's working memory and typed passwords are now **wiped from memory** after use (they could otherwise end up in swap or a crash dump).
 
 ### Fixed
+- **Search in Chinese, Japanese, Thai** and similar languages found words only at the start of a sentence. Words in these scripts are now found (and highlighted) anywhere in a note.
 - **Pasting files copied in a file manager** (Ctrl+C on a file in Files, then Ctrl+V in a note) did nothing. The files are now attached, like dropping them in.
 - **Keyboard use**: the ⋯ menu now has Pin and Move to Folder…; the Menu key (or Shift+F10) opens the selected note's menu in the list; Escape in a menu returns to where you were; and while a dialog is open, Tab can no longer reach the note behind it.
 - Right-clicking text inside a **checklist or table** showed only TuxNotes' menu, hiding spelling suggestions and Cut/Copy/Paste. Text now always gets the normal menu; checklist actions are on a right-click of the checkbox, and table actions on the toolbar's table button (or a right-click on selected cells).

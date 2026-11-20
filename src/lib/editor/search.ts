@@ -43,13 +43,18 @@ export function foldWithMap(text: string): { folded: string; map: number[] } {
 }
 
 /** Ranges [start, end) in `text` (UTF-16 indices) matching `query`. */
+/** Letters of scripts usually written without spaces (same ranges as the notes search). */
+const UNSPACED = /^(?:[\u3040-\u30FF\u31F0-\u31FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF]|[\u{20000}-\u{2FFFF}])/u;
+
 export function findInText(text: string, query: string, wordStart = false): [number, number][] {
   const q = fold(query);
   if (!q) return [];
   const { folded, map } = foldWithMap(text);
   const out: [number, number][] = [];
   for (let i = folded.indexOf(q); i >= 0; i = folded.indexOf(q, i + 1)) {
-    if (wordStart && isWordChar(folded[i - 1])) continue;
+    // Scripts written without spaces (Chinese, Japanese, Thai…) have no word starts to
+    // match: their words are found anywhere, like the notes search does.
+    if (wordStart && isWordChar(folded[i - 1]) && !UNSPACED.test(q)) continue;
     const start = map[i];
     const lastOrig = map[i + q.length - 1];
     let end = lastOrig + ((text.codePointAt(lastOrig) ?? 0) > 0xffff ? 2 : 1);

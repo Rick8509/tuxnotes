@@ -759,3 +759,63 @@ fn changes_from_another_program_are_noticed() {
     assert_ne!(app.data_version().unwrap(), before, "outside changes do");
     assert_eq!(app.get_note(&n.id).unwrap().title, "Changed outside");
 }
+
+#[test]
+fn search_finds_words_inside_chinese_japanese_and_thai_sentences() {
+    let mut s = store();
+    let add = |s: &Store, lines: &[&str]| {
+        let n = s.create_note(None).unwrap();
+        s.update_note_content(&n.id, &doc(lines)).unwrap();
+        n.id
+    };
+    let ja = add(&s, &["買い物", "今日は牛乳を買う"]);
+    let zh = add(&s, &["笔记", "我们明天去北京开会"]);
+    let th = add(&s, &["รายการ", "ฉันชอบกินข้าวผัด"]);
+    let mixed = add(&s, &["Groceries 買い物", "milk and 牛乳"]);
+    fn found(s: &Store, q: &str) -> Vec<String> {
+        s.search(q, 50).unwrap().into_iter().map(|n| n.id).collect()
+    }
+
+    assert_eq!(
+        found(&s, "牛乳").len(),
+        2,
+        "found in the middle of a Japanese sentence"
+    );
+    assert!(found(&s, "牛乳").contains(&ja) && found(&s, "牛乳").contains(&mixed));
+    assert_eq!(found(&s, "北京"), vec![zh.clone()]);
+    assert_eq!(found(&s, "กิน"), vec![th.clone()]);
+    assert_eq!(
+        found(&s, "milk 牛乳"),
+        vec![mixed.clone()],
+        "Latin and CJK words together"
+    );
+    assert!(found(&s, "牛乳 cheese").is_empty(), "every word must match");
+    assert_eq!(
+        found(&s, "買い物"),
+        {
+            let mut v = vec![mixed.clone(), ja.clone()];
+            v.sort_by_key(|id| std::cmp::Reverse(s.get_note_summary(id).unwrap().updated_at));
+            v
+        },
+        "titles too, newest first"
+    );
+    assert!(
+        found(&s, "%").is_empty() && found(&s, "_").is_empty(),
+        "no wildcard surprises"
+    );
+
+    // A locked note's body isn't searchable, whatever the script.
+    s.set_lock_password_with(
+        "hunter22",
+        "",
+        tuxnotes_core::crypto::KdfParams {
+            m_kib: 8 * 1024,
+            t: 1,
+            p: 1,
+        },
+    )
+    .unwrap();
+    s.lock_note(&zh).unwrap();
+    assert!(found(&s, "北京").is_empty());
+    assert_eq!(found(&s, "笔记"), [zh], "the title still is");
+}
